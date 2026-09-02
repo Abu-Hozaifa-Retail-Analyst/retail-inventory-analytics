@@ -80,7 +80,58 @@ rng = np.random.default_rng(RANDOM_SEED)
 
 def generate_dim_date():
     """Generate the date dimension."""
-    pass
+
+    dates = pd.date_range(
+        start=START_DATE,
+        end=END_DATE,
+        freq="D",
+    )
+
+    dim_date = pd.DataFrame(
+        {
+            "date": dates,
+        }
+    )
+
+    dim_date["year"] = dim_date["date"].dt.year
+
+    dim_date["quarter"] = "Q" + dim_date["date"].dt.quarter.astype(str)
+
+    dim_date["month"] = dim_date["date"].dt.month
+
+    dim_date["month_name"] = dim_date["date"].dt.month_name()
+
+    dim_date["week_of_year"] = dim_date["date"].dt.isocalendar().week.astype(int)
+
+    dim_date["day"] = dim_date["date"].dt.day
+
+    dim_date["day_name"] = dim_date["date"].dt.day_name()
+
+    dim_date["day_of_week"] = dim_date["date"].dt.dayofweek
+
+    dim_date["is_weekend"] = dim_date["day_of_week"] >= 4
+
+    dim_date["season"] = np.select(
+        [
+            dim_date["month"].isin([12, 1, 2]),
+            dim_date["month"].isin([3, 4, 5]),
+            dim_date["month"].isin([6, 7, 8]),
+            dim_date["month"].isin([9, 10, 11]),
+        ],
+        [
+            "Winter",
+            "Spring",
+            "Summer",
+            "Autumn",
+        ],
+        default="Unknown",
+    )
+
+    dim_date["is_ramadan"] = False
+
+    dim_date["is_eid_period"] = False
+
+    return dim_date
 
 
 def generate_dim_supplier():
@@ -188,4 +239,23 @@ def generate_all_data():
 
 
 if __name__ == "__main__":
-    generate_all_data()
+    dim_date = generate_dim_date()
+
+    expected_rows = (pd.Timestamp(END_DATE) - pd.Timestamp(START_DATE)).days + 1
+
+    assert len(dim_date) == expected_rows
+    assert dim_date["date"].min() == pd.Timestamp(START_DATE)
+    assert dim_date["date"].max() == pd.Timestamp(END_DATE)
+    assert dim_date["date"].is_unique
+    assert not dim_date["date"].isna().any()
+
+    print("=" * 60)
+    print("dim_date Validation")
+    print("=" * 60)
+
+    print(f"PASS: Row count = {len(dim_date):,}")
+    print(f"PASS: Start date = {dim_date['date'].min().date()}")
+    print(f"PASS: End date = {dim_date['date'].max().date()}")
+    print("PASS: Dates are unique.")
+    print("PASS: No missing dates.")
+    print("PASS: dim_date validation completed.")
