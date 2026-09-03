@@ -136,7 +136,52 @@ def generate_dim_date():
 
 def generate_dim_supplier():
     """Generate the supplier dimension."""
-    pass
+
+    supplier_ids = [f"SUP{i:03d}" for i in range(1, NUMBER_OF_SUPPLIERS + 1)]
+
+    supplier_names = [
+        f"GulfMart Supplier {i:03d}" for i in range(1, NUMBER_OF_SUPPLIERS + 1)
+    ]
+
+    supplier_regions = rng.choice(
+        list(SUPPLIER_REGION_PROBABILITIES.keys()),
+        size=NUMBER_OF_SUPPLIERS,
+        p=list(SUPPLIER_REGION_PROBABILITIES.values()),
+    )
+
+    lead_time_days = np.array(
+        [
+            rng.integers(
+                SUPPLIER_LEAD_TIME_RANGES[region][0],
+                SUPPLIER_LEAD_TIME_RANGES[region][1] + 1,
+            )
+            for region in supplier_regions
+        ]
+    )
+
+    minimum_order_qty = rng.choice(
+        [10, 25, 50, 100, 200, 500],
+        size=NUMBER_OF_SUPPLIERS,
+    )
+
+    supplier_status = rng.choice(
+        list(SUPPLIER_STATUS_PROBABILITIES.keys()),
+        size=NUMBER_OF_SUPPLIERS,
+        p=list(SUPPLIER_STATUS_PROBABILITIES.values()),
+    )
+
+    dim_supplier = pd.DataFrame(
+        {
+            "supplier_id": supplier_ids,
+            "supplier_name": supplier_names,
+            "supplier_region": supplier_regions,
+            "lead_time_days": lead_time_days,
+            "minimum_order_qty": minimum_order_qty,
+            "supplier_status": supplier_status,
+        }
+    )
+
+    return dim_supplier
 
 
 def generate_dim_product():
@@ -239,23 +284,39 @@ def generate_all_data():
 
 
 if __name__ == "__main__":
-    dim_date = generate_dim_date()
+    dim_supplier = generate_dim_supplier()
 
-    expected_rows = (pd.Timestamp(END_DATE) - pd.Timestamp(START_DATE)).days + 1
+    expected_rows = NUMBER_OF_SUPPLIERS
 
-    assert len(dim_date) == expected_rows
-    assert dim_date["date"].min() == pd.Timestamp(START_DATE)
-    assert dim_date["date"].max() == pd.Timestamp(END_DATE)
-    assert dim_date["date"].is_unique
-    assert not dim_date["date"].isna().any()
+    assert len(dim_supplier) == expected_rows
+    assert dim_supplier["supplier_id"].is_unique
+    assert not dim_supplier["supplier_id"].isna().any()
+    assert not dim_supplier["supplier_region"].isna().any()
+    assert not dim_supplier["lead_time_days"].isna().any()
+    assert not dim_supplier["minimum_order_qty"].isna().any()
+    assert not dim_supplier["supplier_status"].isna().any()
+
+    assert (dim_supplier["lead_time_days"] > 0).all()
+
+    assert (dim_supplier["minimum_order_qty"] > 0).all()
 
     print("=" * 60)
-    print("dim_date Validation")
+    print("dim_supplier Validation")
     print("=" * 60)
 
-    print(f"PASS: Row count = {len(dim_date):,}")
-    print(f"PASS: Start date = {dim_date['date'].min().date()}")
-    print(f"PASS: End date = {dim_date['date'].max().date()}")
-    print("PASS: Dates are unique.")
-    print("PASS: No missing dates.")
-    print("PASS: dim_date validation completed.")
+    print(f"PASS: Row count = {len(dim_supplier):,}")
+    print("PASS: Supplier IDs are unique.")
+    print("PASS: No missing supplier IDs.")
+    print("PASS: No missing supplier regions.")
+    print("PASS: Lead times are positive.")
+    print("PASS: Minimum order quantities are positive.")
+    print("PASS: No missing supplier statuses.")
+
+    print("\nSupplier Region Distribution:")
+    print(dim_supplier["supplier_region"].value_counts().sort_index())
+
+    print("\nSupplier Status Distribution:")
+    print(dim_supplier["supplier_status"].value_counts().sort_index())
+
+    print("\nSample Suppliers:")
+    print(dim_supplier.head(10).to_string(index=False))
