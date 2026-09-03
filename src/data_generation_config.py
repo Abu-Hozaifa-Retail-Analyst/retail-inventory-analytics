@@ -55,7 +55,6 @@ PRODUCT_CATEGORIES = {
         "Frozen Foods",
         "Cooking Essentials",
     ],
-    
     "Beverages": [
         "Soft Drinks",
         "Juices",
@@ -63,7 +62,6 @@ PRODUCT_CATEGORIES = {
         "Energy Drinks",
         "Hot Beverages",
     ],
-    
     "Personal Care": [
         "Hair Care",
         "Oral Care",
@@ -71,7 +69,6 @@ PRODUCT_CATEGORIES = {
         "Men's Grooming",
         "Personal Hygiene",
     ],
-    
     "Household": [
         "Cleaning Supplies",
         "Laundry",
@@ -79,7 +76,6 @@ PRODUCT_CATEGORIES = {
         "Paper Products",
         "Home Cleaning",
     ],
-    
     "Electronics": [
         "Mobile Accessories",
         "Small Electronics",
@@ -87,7 +83,6 @@ PRODUCT_CATEGORIES = {
         "Computer Accessories",
         "Smart Devices",
     ],
-    
     "Fashion": [
         "Men's Clothing",
         "Women's Clothing",
@@ -95,7 +90,6 @@ PRODUCT_CATEGORIES = {
         "Footwear",
         "Accessories",
     ],
-    
     "Home & Living": [
         "Kitchenware",
         "Storage",
@@ -103,7 +97,6 @@ PRODUCT_CATEGORIES = {
         "Bedding",
         "Furniture Accessories",
     ],
-    
     "Beauty": [
         "Skincare",
         "Makeup",
@@ -177,22 +170,18 @@ REGION_CITIES = {
     "Central": [
         "Riyadh",
     ],
-    
     "Western": [
         "Jeddah",
         "Makkah",
         "Madinah",
     ],
-    
     "Eastern": [
         "Dammam",
         "Khobar",
     ],
-    
     "Northern": [
         "Tabuk",
     ],
-    
     "Southern": [
         "Abha",
     ],
@@ -254,6 +243,32 @@ CUSTOMER_GENDER_PROBABILITIES = {
     "Female": 0.50,
 }
 
+CUSTOMER_CHANNEL_PROBABILITIES = {
+    "Physical": 0.45,
+    "E-commerce": 0.35,
+    "Omnichannel": 0.20,
+}
+
+CUSTOMER_PURCHASE_FREQUENCY_FACTORS = {
+    "Premium": 1.50,
+    "Regular": 1.00,
+    "Value": 0.80,
+    "New": 0.60,
+}
+
+CUSTOMER_BASKET_FACTORS = {
+    "Premium": 1.50,
+    "Regular": 1.00,
+    "Value": 0.85,
+    "New": 0.70,
+}
+
+CUSTOMER_PRICE_SENSITIVITY = {
+    "Premium": 0.30,
+    "Regular": 0.50,
+    "Value": 0.80,
+    "New": 0.65,
+}
 
 # ------------------------------------------------------------
 # Day-of-Week Demand Factors
@@ -282,7 +297,6 @@ CATEGORY_SEASONALITY_FACTORS = {
         "summer": 1.00,
         "winter": 1.00,
     },
-    
     "Beverages": {
         "normal": 1.00,
         "ramadan": 1.05,
@@ -290,7 +304,6 @@ CATEGORY_SEASONALITY_FACTORS = {
         "summer": 1.35,
         "winter": 0.85,
     },
-    
     "Personal Care": {
         "normal": 1.00,
         "ramadan": 1.10,
@@ -298,7 +311,6 @@ CATEGORY_SEASONALITY_FACTORS = {
         "summer": 1.05,
         "winter": 1.00,
     },
-    
     "Household": {
         "normal": 1.00,
         "ramadan": 1.15,
@@ -306,7 +318,6 @@ CATEGORY_SEASONALITY_FACTORS = {
         "summer": 1.00,
         "winter": 1.05,
     },
-    
     "Electronics": {
         "normal": 1.00,
         "ramadan": 1.15,
@@ -314,7 +325,6 @@ CATEGORY_SEASONALITY_FACTORS = {
         "summer": 1.05,
         "winter": 1.00,
     },
-    
     "Fashion": {
         "normal": 1.00,
         "ramadan": 1.15,
@@ -322,7 +332,6 @@ CATEGORY_SEASONALITY_FACTORS = {
         "summer": 1.05,
         "winter": 1.20,
     },
-    
     "Home & Living": {
         "normal": 1.00,
         "ramadan": 1.10,
@@ -330,7 +339,6 @@ CATEGORY_SEASONALITY_FACTORS = {
         "summer": 1.00,
         "winter": 1.10,
     },
-    
     "Beauty": {
         "normal": 1.00,
         "ramadan": 1.15,
@@ -391,7 +399,6 @@ LONG_LEAD_TIME_RISK_PROBABILITY = 0.20
 DEMAND_SPIKE_PROBABILITY = 0.08
 
 DEMAND_SPIKE_FACTOR = 1.75
-
 
 
 # ------------------------------------------------------------

@@ -49,6 +49,10 @@ from data_generation_config import (
     CUSTOMER_SEGMENT_PROBABILITIES,
     CUSTOMER_AGE_GROUPS,
     CUSTOMER_GENDER_PROBABILITIES,
+    CUSTOMER_CHANNEL_PROBABILITIES,
+    CUSTOMER_PURCHASE_FREQUENCY_FACTORS,
+    CUSTOMER_BASKET_FACTORS,
+    CUSTOMER_PRICE_SENSITIVITY,
     DAY_OF_WEEK_FACTORS,
     CATEGORY_SEASONALITY_FACTORS,
     PROMOTION_PROBABILITY,
@@ -608,7 +612,187 @@ def generate_dim_store():
 
 def generate_dim_customer():
     """Generate the customer dimension."""
-    pass
+
+    # ---------------------------------------------------------
+    # Customer IDs
+    # ---------------------------------------------------------
+
+    customer_ids = [f"CUST{i:05d}" for i in range(1, NUMBER_OF_CUSTOMERS + 1)]
+
+    # ---------------------------------------------------------
+    # Customer segments
+    # ---------------------------------------------------------
+
+    customer_segments = list(CUSTOMER_SEGMENT_PROBABILITIES.keys())
+
+    customer_segment = rng.choice(
+        customer_segments,
+        size=NUMBER_OF_CUSTOMERS,
+        p=list(CUSTOMER_SEGMENT_PROBABILITIES.values()),
+    )
+
+    # ---------------------------------------------------------
+    # Gender
+    # ---------------------------------------------------------
+
+    genders = list(CUSTOMER_GENDER_PROBABILITIES.keys())
+
+    gender = rng.choice(
+        genders,
+        size=NUMBER_OF_CUSTOMERS,
+        p=list(CUSTOMER_GENDER_PROBABILITIES.values()),
+    )
+
+    # ---------------------------------------------------------
+    # Age group
+    # ---------------------------------------------------------
+
+    age_group = rng.choice(
+        CUSTOMER_AGE_GROUPS,
+        size=NUMBER_OF_CUSTOMERS,
+    )
+
+    # ---------------------------------------------------------
+    # City
+    # ---------------------------------------------------------
+    #
+    # Customers are assigned to cities represented in
+    # the retailer's store network.
+    # ---------------------------------------------------------
+
+    customer_cities = [city for cities in REGION_CITIES.values() for city in cities]
+
+    city = rng.choice(
+        customer_cities,
+        size=NUMBER_OF_CUSTOMERS,
+    )
+
+    # ---------------------------------------------------------
+    # Customer tenure
+    # ---------------------------------------------------------
+    #
+    # Represents how long the customer has been in the
+    # retailer's customer base.
+    # ---------------------------------------------------------
+
+    project_start = pd.Timestamp(START_DATE)
+
+    project_end = pd.Timestamp(END_DATE)
+
+    customer_start_dates = project_start + pd.to_timedelta(
+        rng.integers(
+            0,
+            (project_end - project_start).days + 1,
+            size=NUMBER_OF_CUSTOMERS,
+        ),
+        unit="D",
+    )
+
+    customer_tenure_days = (project_end - customer_start_dates).days
+
+    # ---------------------------------------------------------
+    # Preferred channel
+    # ---------------------------------------------------------
+
+    channels = list(CUSTOMER_CHANNEL_PROBABILITIES.keys())
+
+    preferred_channel = rng.choice(
+        channels,
+        size=NUMBER_OF_CUSTOMERS,
+        p=list(CUSTOMER_CHANNEL_PROBABILITIES.values()),
+    )
+
+    # ---------------------------------------------------------
+    # Purchase frequency factor
+    # ---------------------------------------------------------
+
+    purchase_frequency_factor = (
+        pd.Series(customer_segment)
+        .map(CUSTOMER_PURCHASE_FREQUENCY_FACTORS)
+        .to_numpy()
+        .copy()
+    )
+
+    # Add controlled customer-level variation.
+    purchase_frequency_factor *= rng.uniform(
+        0.85,
+        1.15,
+        size=NUMBER_OF_CUSTOMERS,
+    )
+
+    purchase_frequency_factor = np.round(
+        purchase_frequency_factor,
+        2,
+    )
+
+    # ---------------------------------------------------------
+    # Average basket factor
+    # ---------------------------------------------------------
+
+    average_basket_factor = (
+        pd.Series(customer_segment).map(CUSTOMER_BASKET_FACTORS).to_numpy().copy()
+    )
+
+    # Add controlled customer-level variation.
+    average_basket_factor *= rng.uniform(
+        0.85,
+        1.15,
+        size=NUMBER_OF_CUSTOMERS,
+    )
+
+    average_basket_factor = np.round(
+        average_basket_factor,
+        2,
+    )
+
+    # ---------------------------------------------------------
+    # Price sensitivity
+    # ---------------------------------------------------------
+
+    price_sensitivity = (
+        pd.Series(customer_segment).map(CUSTOMER_PRICE_SENSITIVITY).to_numpy().copy()
+    )
+
+    # Add controlled variation while keeping the values
+    # within the 0-1 range.
+    price_sensitivity *= rng.uniform(
+        0.90,
+        1.10,
+        size=NUMBER_OF_CUSTOMERS,
+    )
+
+    price_sensitivity = np.clip(
+        price_sensitivity,
+        0.0,
+        1.0,
+    )
+
+    price_sensitivity = np.round(
+        price_sensitivity,
+        2,
+    )
+
+    # ---------------------------------------------------------
+    # Build customer dimension
+    # ---------------------------------------------------------
+
+    dim_customer = pd.DataFrame(
+        {
+            "customer_id": customer_ids,
+            "customer_segment": customer_segment,
+            "gender": gender,
+            "age_group": age_group,
+            "city": city,
+            "customer_start_date": customer_start_dates,
+            "customer_tenure_days": customer_tenure_days,
+            "preferred_channel": preferred_channel,
+            "purchase_frequency_factor": (purchase_frequency_factor),
+            "average_basket_factor": (average_basket_factor),
+            "price_sensitivity": price_sensitivity,
+        }
+    )
+
+    return dim_customer
 
 
 # ============================================================
@@ -696,133 +880,134 @@ def generate_all_data():
 
 
 if __name__ == "__main__":
-    dim_store = generate_dim_store()
+    dim_customer = generate_dim_customer()
 
-    expected_rows = NUMBER_OF_STORES
+    customer_cities = [city for cities in REGION_CITIES.values() for city in cities]
+
+    channels = list(CUSTOMER_CHANNEL_PROBABILITIES.keys())
+
+    expected_rows = NUMBER_OF_CUSTOMERS
 
     # ---------------------------------------------------------
     # Basic validation
     # ---------------------------------------------------------
 
-    assert len(dim_store) == expected_rows
+    assert len(dim_customer) == expected_rows
 
-    assert dim_store["store_id"].is_unique
+    assert dim_customer["customer_id"].is_unique
 
-    assert not dim_store["store_id"].isna().any()
+    assert not dim_customer["customer_id"].isna().any()
 
-    assert not dim_store["store_name"].isna().any()
+    assert not dim_customer["customer_segment"].isna().any()
 
-    assert not dim_store["city"].isna().any()
+    assert not dim_customer["gender"].isna().any()
 
-    assert not dim_store["region"].isna().any()
+    assert not dim_customer["age_group"].isna().any()
 
-    assert not dim_store["store_type"].isna().any()
+    assert not dim_customer["city"].isna().any()
 
-    assert not dim_store["opening_date"].isna().any()
+    assert not dim_customer["customer_start_date"].isna().any()
 
-    assert not dim_store["store_size_sqm"].isna().any()
+    assert not dim_customer["customer_tenure_days"].isna().any()
 
-    assert not dim_store["channel"].isna().any()
+    assert not dim_customer["preferred_channel"].isna().any()
 
-    assert not dim_store["store_demand_factor"].isna().any()
+    assert not dim_customer["purchase_frequency_factor"].isna().any()
+
+    assert not dim_customer["average_basket_factor"].isna().any()
+
+    assert not dim_customer["price_sensitivity"].isna().any()
 
     # ---------------------------------------------------------
     # Business-rule validation
     # ---------------------------------------------------------
 
-    assert (dim_store["store_size_sqm"] > 0).all()
+    assert (dim_customer["customer_tenure_days"] >= 0).all()
 
-    assert (dim_store["store_demand_factor"] > 0).all()
+    assert (dim_customer["purchase_frequency_factor"] > 0).all()
 
-    assert (dim_store["opening_date"] >= pd.Timestamp(START_DATE)).all()
+    assert (dim_customer["average_basket_factor"] > 0).all()
 
-    assert (dim_store["opening_date"] <= pd.Timestamp(END_DATE)).all()
+    assert (dim_customer["price_sensitivity"] >= 0).all()
 
-    # ---------------------------------------------------------
-    # Region-city consistency
-    # ---------------------------------------------------------
-
-    for _, row in dim_store.iterrows():
-        assert row["city"] in REGION_CITIES[row["region"]]
+    assert (dim_customer["price_sensitivity"] <= 1).all()
 
     # ---------------------------------------------------------
-    # Channel consistency
+    # Customer start date validation
     # ---------------------------------------------------------
 
-    ecommerce_check = (
-        dim_store.loc[
-            dim_store["store_type"] == "E-commerce",
-            "channel",
-        ]
-        == "E-commerce"
-    ).all()
+    assert (dim_customer["customer_start_date"] >= pd.Timestamp(START_DATE)).all()
 
-    physical_check = (
-        dim_store.loc[
-            dim_store["store_type"] != "E-commerce",
-            "channel",
-        ]
-        == "Physical"
-    ).all()
-
-    assert ecommerce_check
-    assert physical_check
+    assert (dim_customer["customer_start_date"] <= pd.Timestamp(END_DATE)).all()
 
     # ---------------------------------------------------------
-    # Store type / demand factor validation
+    # City validation
     # ---------------------------------------------------------
 
-    expected_demand_factor = dim_store["store_type"].map(
-        STORE_TYPE_DEMAND_FACTORS
-    ) * dim_store["region"].map(REGION_DEMAND_FACTORS)
+    valid_cities = set(customer_cities)
 
-    assert np.allclose(
-        dim_store["store_demand_factor"],
-        expected_demand_factor.round(2),
-    )
+    assert dim_customer["city"].isin(valid_cities).all()
+
+    # ---------------------------------------------------------
+    # Preferred channel validation
+    # ---------------------------------------------------------
+
+    valid_channels = set(channels)
+
+    assert dim_customer["preferred_channel"].isin(valid_channels).all()
 
     # ---------------------------------------------------------
     # Output
     # ---------------------------------------------------------
 
     print("=" * 60)
-    print("dim_store Validation")
+    print("dim_customer Validation")
     print("=" * 60)
 
-    print(f"PASS: Row count = {len(dim_store):,}")
+    print(f"PASS: Row count = {len(dim_customer):,}")
 
-    print("PASS: Store IDs are unique.")
+    print("PASS: Customer IDs are unique.")
 
-    print("PASS: No missing store IDs.")
+    print("PASS: No missing customer IDs.")
 
-    print("PASS: No missing store names.")
+    print("PASS: No missing customer segments.")
+
+    print("PASS: No missing genders.")
+
+    print("PASS: No missing age groups.")
 
     print("PASS: No missing cities.")
 
-    print("PASS: No missing regions.")
+    print("PASS: Customer tenure values are valid.")
 
-    print("PASS: Store sizes are positive.")
+    print("PASS: Purchase frequency factors are positive.")
 
-    print("PASS: Opening dates are within the project period.")
+    print("PASS: Average basket factors are positive.")
 
-    print("PASS: Region-city relationships are valid.")
+    print("PASS: Price sensitivity values are between 0 and 1.")
 
-    print("PASS: Channel assignments are valid.")
+    print("PASS: Customer start dates are within the project period.")
 
-    print("PASS: Store demand factors are calculated correctly.")
+    print("PASS: Customer cities are valid.")
 
-    print("\nStore Type Distribution:")
+    print("PASS: Preferred channels are valid.")
 
-    print(dim_store["store_type"].value_counts().sort_index())
+    print("\nCustomer Segment Distribution:")
 
-    print("\nRegion Distribution:")
+    print(dim_customer["customer_segment"].value_counts().sort_index())
 
-    print(dim_store["region"].value_counts().sort_index())
+    print("\nGender Distribution:")
 
-    print("\nChannel Distribution:")
+    print(dim_customer["gender"].value_counts().sort_index())
 
-    print(dim_store["channel"].value_counts().sort_index())
+    print("\nAge Group Distribution:")
 
-    print("\nSample Stores:")
+    print(dim_customer["age_group"].value_counts().sort_index())
 
-    print(dim_store.head(10).to_string(index=False))
+    print("\nPreferred Channel Distribution:")
+
+    print(dim_customer["preferred_channel"].value_counts().sort_index())
+
+    print("\nSample Customers:")
+
+    print(dim_customer.head(10).to_string(index=False))
