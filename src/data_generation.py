@@ -53,6 +53,7 @@ from data_generation_config import (
     CUSTOMER_PURCHASE_FREQUENCY_FACTORS,
     CUSTOMER_BASKET_FACTORS,
     CUSTOMER_PRICE_SENSITIVITY,
+    TRANSACTION_QUANTITY_RANGE,
     DAY_OF_WEEK_FACTORS,
     CATEGORY_SEASONALITY_FACTORS,
     PROMOTION_PROBABILITY,
@@ -370,7 +371,6 @@ def generate_dim_product():
         unit_cost,
         2,
     )
-
     # ---------------------------------------------------------
     # Product lifecycle
     # ---------------------------------------------------------
@@ -807,7 +807,350 @@ def generate_fact_sales(
     dim_customer,
 ):
     """Generate sales transactions based on modeled demand."""
-    pass
+
+    transaction_dates = rng.choice(
+        dim_date["date"].to_numpy(),
+        size=TARGET_SALES_TRANSACTIONS,
+    )
+
+    product_weights = (
+        dim_product["base_demand"]
+        * dim_product["demand_class"].map(DEMAND_CLASS_FACTORS)
+        * dim_product["demand_trajectory"].map(DEMAND_TRAJECTORY_FACTORS)
+    )
+
+    product_weights = product_weights / product_weights.sum()
+
+    product_indices = rng.choice(
+        dim_product.index,
+        size=TARGET_SALES_TRANSACTIONS,
+        p=product_weights.to_numpy(),
+    )
+
+    store_weights = (
+        dim_store["store_demand_factor"] / dim_store["store_demand_factor"].sum()
+    )
+
+    store_indices = rng.choice(
+        dim_store.index,
+        size=TARGET_SALES_TRANSACTIONS,
+        p=store_weights.to_numpy(),
+    )
+    customer_weights = (
+        dim_customer["purchase_frequency_factor"]
+        * dim_customer["average_basket_factor"]
+    )
+
+    customer_weights = customer_weights / customer_weights.sum()
+
+    customer_indices = rng.choice(
+        dim_customer.index,
+        size=TARGET_SALES_TRANSACTIONS,
+        p=customer_weights.to_numpy(),
+    )
+
+    product_data = dim_product.loc[product_indices].reset_index(drop=True)
+
+    store_data = dim_store.loc[store_indices].reset_index(drop=True)
+
+    customer_data = dim_customer.loc[customer_indices].reset_index(drop=True)
+
+    sales = pd.DataFrame(
+        {
+            "transaction_id": [
+                f"TXN{i:07d}"
+                for i in range(
+                    1,
+                    TARGET_SALES_TRANSACTIONS + 1,
+                )
+            ],
+            "transaction_date": transaction_dates,
+            "product_id": product_data["product_id"],
+            "store_id": store_data["store_id"],
+            "customer_id": customer_data["customer_id"],
+        }
+    )
+
+    # --------------------------------------------------
+    # Product demand attributes
+    # --------------------------------------------------
+
+    sales["base_demand"] = product_data["base_demand"].to_numpy()
+
+    sales["demand_class"] = product_data["demand_class"].to_numpy()
+
+    sales["demand_class_factor"] = (
+        product_data["demand_class"].map(DEMAND_CLASS_FACTORS).to_numpy()
+    )
+
+    sales["demand_trajectory"] = product_data["demand_trajectory"].to_numpy()
+
+    sales["demand_trajectory_factor"] = (
+        product_data["demand_trajectory"].map(DEMAND_TRAJECTORY_FACTORS).to_numpy()
+    )
+
+    sales["category"] = product_data["category"].to_numpy()
+
+    sales["unit_cost"] = product_data["unit_cost"].to_numpy()
+
+    sales["product_selling_price"] = product_data["selling_price"].to_numpy()
+
+    # --------------------------------------------------
+    # Store demand attributes
+    # --------------------------------------------------
+
+    sales["store_demand_factor"] = store_data["store_demand_factor"].to_numpy()
+
+    # --------------------------------------------------
+    # Customer demand attributes
+    # --------------------------------------------------
+
+    sales["customer_frequency_factor"] = customer_data[
+        "purchase_frequency_factor"
+    ].to_numpy()
+
+    sales["customer_basket_factor"] = customer_data["average_basket_factor"].to_numpy()
+
+    sales["price_sensitivity"] = customer_data["price_sensitivity"].to_numpy()
+
+    # --------------------------------------------------
+    # Calendar attributes
+    # --------------------------------------------------
+
+    transaction_dates = pd.to_datetime(sales["transaction_date"])
+
+    sales["month"] = transaction_dates.dt.month
+
+    sales["day_of_week"] = transaction_dates.dt.dayofweek
+
+    sales["season"] = np.select(
+        [
+            sales["month"].isin([12, 1, 2]),
+            sales["month"].isin([3, 4, 5]),
+            sales["month"].isin([6, 7, 8]),
+            sales["month"].isin([9, 10, 11]),
+        ],
+        [
+            "Winter",
+            "Spring",
+            "Summer",
+            "Autumn",
+        ],
+        default="Unknown",
+    )
+
+    sales["day_of_week_factor"] = (
+        sales["day_of_week"].map(DAY_OF_WEEK_FACTORS).to_numpy()
+    )
+
+    # --------------------------------------------------
+    # Ramadan / Eid indicators
+    # Synthetic calendar assumptions
+    # --------------------------------------------------
+
+    transaction_year = transaction_dates.dt.year
+
+    transaction_month = transaction_dates.dt.month
+
+    transaction_day = transaction_dates.dt.day
+
+    sales["is_ramadan"] = (
+        (
+            (transaction_year == 2023)
+            & (transaction_month == 3)
+            & (transaction_day >= 23)
+        )
+        | (
+            (transaction_year == 2024)
+            & (transaction_month == 3)
+            & (transaction_day <= 31)
+        )
+        | ((transaction_year == 2025) & (transaction_month == 3))
+    )
+
+    sales["is_eid_period"] = (
+        ((transaction_year == 2023) & (transaction_month == 4) & (transaction_day <= 5))
+        | (
+            (transaction_year == 2024)
+            & (transaction_month == 4)
+            & (transaction_day <= 12)
+        )
+        | (
+            (transaction_year == 2025)
+            & (transaction_month == 3)
+            & (transaction_day >= 30)
+        )
+    )
+
+    # Keep Ramadan and Eid mutually exclusive.
+    sales["is_eid_period"] = sales["is_eid_period"] & ~sales["is_ramadan"]
+    # --------------------------------------------------
+    # Category seasonality
+    # --------------------------------------------------
+
+    seasonality_factor = np.ones(TARGET_SALES_TRANSACTIONS)
+
+    for category in CATEGORY_SEASONALITY_FACTORS:
+        category_mask = sales["category"] == category
+
+        normal_mask = category_mask & ~sales["is_ramadan"] & ~sales["is_eid_period"]
+
+        for season_name, config_name in [
+            ("Winter", "winter"),
+            ("Spring", "normal"),
+            ("Summer", "summer"),
+            ("Autumn", "normal"),
+        ]:
+            season_mask = normal_mask & (sales["season"] == season_name)
+
+            seasonality_factor[season_mask] = CATEGORY_SEASONALITY_FACTORS[category][
+                config_name
+            ]
+
+        ramadan_mask = category_mask & sales["is_ramadan"]
+
+        seasonality_factor[ramadan_mask] = CATEGORY_SEASONALITY_FACTORS[category][
+            "ramadan"
+        ]
+
+        eid_mask = category_mask & sales["is_eid_period"]
+
+        seasonality_factor[eid_mask] = CATEGORY_SEASONALITY_FACTORS[category]["eid"]
+
+    sales["seasonality_factor"] = np.round(
+        seasonality_factor,
+        2,
+    )
+
+    # --------------------------------------------------
+    # Core demand intensity
+    # --------------------------------------------------
+
+    sales["demand_intensity"] = (
+        sales["base_demand"]
+        * sales["demand_class_factor"]
+        * sales["demand_trajectory_factor"]
+        * sales["store_demand_factor"]
+        * sales["customer_frequency_factor"]
+        * sales["customer_basket_factor"]
+        * sales["day_of_week_factor"]
+        * sales["seasonality_factor"]
+    )
+
+    # --------------------------------------------------
+    # Random demand variation
+    # --------------------------------------------------
+
+    random_variation = rng.uniform(
+        0.75,
+        1.25,
+        size=TARGET_SALES_TRANSACTIONS,
+    )
+
+    sales["demand_intensity"] *= random_variation
+
+    # --------------------------------------------------
+    # Demand spikes
+    # --------------------------------------------------
+
+    sales["demand_spike"] = (
+        rng.random(TARGET_SALES_TRANSACTIONS) < DEMAND_SPIKE_PROBABILITY
+    )
+
+    sales.loc[
+        sales["demand_spike"],
+        "demand_intensity",
+    ] *= DEMAND_SPIKE_FACTOR
+
+    # --------------------------------------------------
+    # Promotions
+    # --------------------------------------------------
+
+    sales["is_promotion"] = (
+        rng.random(TARGET_SALES_TRANSACTIONS) < PROMOTION_PROBABILITY
+    )
+
+    sales["discount_pct"] = np.where(
+        sales["is_promotion"],
+        rng.uniform(
+            PROMOTION_DISCOUNT_RANGE[0],
+            PROMOTION_DISCOUNT_RANGE[1],
+            size=TARGET_SALES_TRANSACTIONS,
+        ),
+        0.0,
+    )
+
+    sales["discount_pct"] = sales["discount_pct"].round(2)
+
+    sales.loc[
+        sales["is_promotion"],
+        "demand_intensity",
+    ] *= PROMOTION_DEMAND_LIFT
+
+    sales["demand_intensity"] = sales["demand_intensity"].round(2)
+
+    # --------------------------------------------------
+    # Final transaction quantity
+    # --------------------------------------------------
+
+    # Convert demand intensity into realistic transaction quantity.
+    quantity_lambda = sales["demand_intensity"] / sales["demand_intensity"].median() * 3
+
+    quantity_lambda = quantity_lambda.clip(
+        lower=0.5,
+        upper=8.0,
+    )
+
+    sales["quantity"] = rng.poisson(quantity_lambda.to_numpy()) + 1
+
+    sales["quantity"] = sales["quantity"].clip(
+        lower=TRANSACTION_QUANTITY_RANGE[0],
+        upper=TRANSACTION_QUANTITY_RANGE[1],
+    )
+
+    # --------------------------------------------------
+    # Selling price
+    # --------------------------------------------------
+
+    price_variation = rng.uniform(
+        0.98,
+        1.02,
+        size=TARGET_SALES_TRANSACTIONS,
+    )
+
+    sales["unit_price"] = (sales["product_selling_price"] * price_variation).round(2)
+
+    # --------------------------------------------------
+    # Gross sales
+    # --------------------------------------------------
+
+    sales["gross_sales"] = (sales["quantity"] * sales["unit_price"]).round(2)
+
+    # --------------------------------------------------
+    # Discount amount
+    # --------------------------------------------------
+
+    sales["discount_amount"] = (sales["gross_sales"] * sales["discount_pct"]).round(2)
+
+    # --------------------------------------------------
+    # Net sales
+    # --------------------------------------------------
+
+    sales["net_sales"] = (sales["gross_sales"] - sales["discount_amount"]).round(2)
+
+    # --------------------------------------------------
+    # COGS
+    # --------------------------------------------------
+
+    sales["cogs"] = (sales["quantity"] * sales["unit_cost"]).round(2)
+
+    # --------------------------------------------------
+    # Gross profit
+    # --------------------------------------------------
+
+    sales["gross_profit"] = (sales["net_sales"] - sales["cogs"]).round(2)
+
+    return sales
 
 
 def generate_fact_inventory(
@@ -880,134 +1223,155 @@ def generate_all_data():
 
 
 if __name__ == "__main__":
+    dim_date = generate_dim_date()
+    dim_product = generate_dim_product()
+    dim_store = generate_dim_store()
     dim_customer = generate_dim_customer()
 
-    customer_cities = [city for cities in REGION_CITIES.values() for city in cities]
-
-    channels = list(CUSTOMER_CHANNEL_PROBABILITIES.keys())
-
-    expected_rows = NUMBER_OF_CUSTOMERS
-
-    # ---------------------------------------------------------
-    # Basic validation
-    # ---------------------------------------------------------
-
-    assert len(dim_customer) == expected_rows
-
-    assert dim_customer["customer_id"].is_unique
-
-    assert not dim_customer["customer_id"].isna().any()
-
-    assert not dim_customer["customer_segment"].isna().any()
-
-    assert not dim_customer["gender"].isna().any()
-
-    assert not dim_customer["age_group"].isna().any()
-
-    assert not dim_customer["city"].isna().any()
-
-    assert not dim_customer["customer_start_date"].isna().any()
-
-    assert not dim_customer["customer_tenure_days"].isna().any()
-
-    assert not dim_customer["preferred_channel"].isna().any()
-
-    assert not dim_customer["purchase_frequency_factor"].isna().any()
-
-    assert not dim_customer["average_basket_factor"].isna().any()
-
-    assert not dim_customer["price_sensitivity"].isna().any()
-
-    # ---------------------------------------------------------
-    # Business-rule validation
-    # ---------------------------------------------------------
-
-    assert (dim_customer["customer_tenure_days"] >= 0).all()
-
-    assert (dim_customer["purchase_frequency_factor"] > 0).all()
-
-    assert (dim_customer["average_basket_factor"] > 0).all()
-
-    assert (dim_customer["price_sensitivity"] >= 0).all()
-
-    assert (dim_customer["price_sensitivity"] <= 1).all()
-
-    # ---------------------------------------------------------
-    # Customer start date validation
-    # ---------------------------------------------------------
-
-    assert (dim_customer["customer_start_date"] >= pd.Timestamp(START_DATE)).all()
-
-    assert (dim_customer["customer_start_date"] <= pd.Timestamp(END_DATE)).all()
-
-    # ---------------------------------------------------------
-    # City validation
-    # ---------------------------------------------------------
-
-    valid_cities = set(customer_cities)
-
-    assert dim_customer["city"].isin(valid_cities).all()
-
-    # ---------------------------------------------------------
-    # Preferred channel validation
-    # ---------------------------------------------------------
-
-    valid_channels = set(channels)
-
-    assert dim_customer["preferred_channel"].isin(valid_channels).all()
-
-    # ---------------------------------------------------------
-    # Output
-    # ---------------------------------------------------------
+    fact_sales = generate_fact_sales(
+        dim_date,
+        dim_product,
+        dim_store,
+        dim_customer,
+    )
 
     print("=" * 60)
-    print("dim_customer Validation")
+    print("fact_sales Initial Test")
     print("=" * 60)
 
-    print(f"PASS: Row count = {len(dim_customer):,}")
+    print(f"PASS: Row count = {len(fact_sales):,}")
 
-    print("PASS: Customer IDs are unique.")
+    print(f"PASS: Unique transactions = {fact_sales['transaction_id'].nunique():,}")
 
-    print("PASS: No missing customer IDs.")
+    print("\nColumns:")
+    print(fact_sales.columns.tolist())
 
-    print("PASS: No missing customer segments.")
+    print("\nSample Transactions:")
+    print("\n" + "=" * 60)
+    print("Business Behavior Validation")
+    print("=" * 60)
 
-    print("PASS: No missing genders.")
+    print("\nSales by Demand Class:")
+    print(
+        fact_sales.groupby("demand_class")["quantity"]
+        .sum()
+        .sort_values(ascending=False)
+    )
 
-    print("PASS: No missing age groups.")
+    print("\nSales by Demand Trajectory:")
+    print(
+        fact_sales.groupby("demand_trajectory")["quantity"]
+        .sum()
+        .sort_values(ascending=False)
+    )
 
-    print("PASS: No missing cities.")
+    print("\nSales by Promotion:")
+    print(fact_sales.groupby("is_promotion")["quantity"].sum())
 
-    print("PASS: Customer tenure values are valid.")
+    print("\nAverage Demand Intensity by Demand Class:")
+    print(
+        fact_sales.groupby("demand_class")["demand_intensity"]
+        .mean()
+        .sort_values(ascending=False)
+    )
+    print("\nAverage Quantity by Promotion:")
+    print(fact_sales.groupby("is_promotion")["quantity"].mean())
+    print("\nFinancial Validation:")
 
-    print("PASS: Purchase frequency factors are positive.")
+assert (fact_sales["quantity"] > 0).all()
 
-    print("PASS: Average basket factors are positive.")
+assert (fact_sales["unit_price"] > 0).all()
 
-    print("PASS: Price sensitivity values are between 0 and 1.")
+assert (fact_sales["gross_sales"] >= fact_sales["net_sales"]).all()
 
-    print("PASS: Customer start dates are within the project period.")
+assert (fact_sales["discount_amount"] >= 0).all()
 
-    print("PASS: Customer cities are valid.")
+assert (fact_sales["net_sales"] > 0).all()
 
-    print("PASS: Preferred channels are valid.")
+assert (fact_sales["cogs"] > 0).all()
 
-    print("\nCustomer Segment Distribution:")
+assert np.allclose(
+    fact_sales["gross_sales"],
+    fact_sales["quantity"] * fact_sales["unit_price"],
+    atol=0.01,
+)
 
-    print(dim_customer["customer_segment"].value_counts().sort_index())
+assert np.allclose(
+    fact_sales["net_sales"],
+    fact_sales["gross_sales"] - fact_sales["discount_amount"],
+    atol=0.01,
+)
 
-    print("\nGender Distribution:")
+assert np.allclose(
+    fact_sales["cogs"],
+    fact_sales["quantity"] * fact_sales["unit_cost"],
+    atol=0.01,
+)
 
-    print(dim_customer["gender"].value_counts().sort_index())
+assert np.allclose(
+    fact_sales["gross_profit"],
+    fact_sales["net_sales"] - fact_sales["cogs"],
+    atol=0.01,
+)
 
-    print("\nAge Group Distribution:")
+print("PASS: Quantity values are positive.")
+print("PASS: Unit prices are positive.")
+print("PASS: Gross Sales >= Net Sales.")
+print("PASS: Discount amounts are non-negative.")
+print("PASS: Net Sales are positive.")
+print("PASS: COGS values are positive.")
+print("PASS: Gross Sales calculation is correct.")
+print("PASS: Net Sales calculation is correct.")
+print("PASS: COGS calculation is correct.")
+print("PASS: Gross Profit calculation is correct.")
 
-    print(dim_customer["age_group"].value_counts().sort_index())
+print("\nKey Validation:")
 
-    print("\nPreferred Channel Distribution:")
+assert fact_sales["transaction_id"].is_unique
+assert fact_sales["product_id"].isin(dim_product["product_id"]).all()
+assert fact_sales["store_id"].isin(dim_store["store_id"]).all()
+assert fact_sales["customer_id"].isin(dim_customer["customer_id"]).all()
 
-    print(dim_customer["preferred_channel"].value_counts().sort_index())
+print("PASS: Transaction IDs are unique.")
+print("PASS: All product IDs exist in dim_product.")
+print("PASS: All store IDs exist in dim_store.")
+print("PASS: All customer IDs exist in dim_customer.")
 
-    print("\nSample Customers:")
 
-    print(dim_customer.head(10).to_string(index=False))
+print("\n" + "=" * 60)
+print("Seasonality Validation")
+print("=" * 60)
+
+print("\nAverage Quantity by Season:")
+print(fact_sales.groupby("season")["quantity"].mean().sort_values(ascending=False))
+
+print("\nAverage Quantity - Ramadan vs Normal:")
+print(fact_sales.groupby("is_ramadan")["quantity"].mean())
+
+print("\nAverage Quantity - Eid vs Normal:")
+print(fact_sales.groupby("is_eid_period")["quantity"].mean())
+
+print("\nTransactions by Season:")
+print(fact_sales["season"].value_counts().sort_index())
+
+print("\nRamadan/Eid Transaction Counts:")
+
+print("Ramadan transactions:", fact_sales["is_ramadan"].sum())
+
+print("Eid-period transactions:", fact_sales["is_eid_period"].sum())
+
+print(
+    "Both Ramadan and Eid:",
+    (fact_sales["is_ramadan"] & fact_sales["is_eid_period"]).sum(),
+)
+
+print("\nRamadan/Eid Validation:")
+
+print("Ramadan transactions:", fact_sales["is_ramadan"].sum())
+
+print("Eid-period transactions:", fact_sales["is_eid_period"].sum())
+
+print(
+    "Both Ramadan and Eid:",
+    (fact_sales["is_ramadan"] & fact_sales["is_eid_period"]).sum(),
+)

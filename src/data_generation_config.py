@@ -31,6 +31,7 @@ NUMBER_OF_CUSTOMERS = 5_000
 NUMBER_OF_SUPPLIERS = 30
 
 TARGET_SALES_TRANSACTIONS = 125_000
+TRANSACTION_QUANTITY_RANGE = (1, 10)
 
 
 # ------------------------------------------------------------
