@@ -459,7 +459,151 @@ def generate_dim_product():
 
 def generate_dim_store():
     """Generate the store dimension."""
-    pass
+
+    # ---------------------------------------------------------
+    # Store IDs and names
+    # ---------------------------------------------------------
+
+    store_ids = [f"STORE{i:03d}" for i in range(1, NUMBER_OF_STORES + 1)]
+
+    store_names = [f"GulfMart Store {i:03d}" for i in range(1, NUMBER_OF_STORES + 1)]
+
+    # ---------------------------------------------------------
+    # Store type
+    # ---------------------------------------------------------
+
+    store_types = list(STORE_TYPE_PROBABILITIES.keys())
+
+    store_type = rng.choice(
+        store_types,
+        size=NUMBER_OF_STORES,
+        p=list(STORE_TYPE_PROBABILITIES.values()),
+    )
+
+    # ---------------------------------------------------------
+    # Region
+    # ---------------------------------------------------------
+
+    regions = list(REGION_CITIES.keys())
+
+    region = rng.choice(
+        regions,
+        size=NUMBER_OF_STORES,
+    )
+
+    # ---------------------------------------------------------
+    # City
+    # ---------------------------------------------------------
+
+    city = [rng.choice(REGION_CITIES[selected_region]) for selected_region in region]
+
+    # ---------------------------------------------------------
+    # Store size
+    # ---------------------------------------------------------
+
+    store_size_sqm = np.zeros(
+        NUMBER_OF_STORES,
+        dtype=int,
+    )
+
+    for store_type_name in store_types:
+        mask = store_type == store_type_name
+
+        if store_type_name == "Hypermarket":
+            store_size_sqm[mask] = rng.integers(
+                5_000,
+                15_001,
+                size=mask.sum(),
+            )
+
+        elif store_type_name == "Supermarket":
+            store_size_sqm[mask] = rng.integers(
+                1_500,
+                5_001,
+                size=mask.sum(),
+            )
+
+        elif store_type_name == "Express":
+            store_size_sqm[mask] = rng.integers(
+                300,
+                1_501,
+                size=mask.sum(),
+            )
+
+        elif store_type_name == "E-commerce":
+            # E-commerce does not represent a
+            # traditional physical store.
+            store_size_sqm[mask] = rng.integers(
+                500,
+                3_001,
+                size=mask.sum(),
+            )
+
+    # ---------------------------------------------------------
+    # Opening date
+    # ---------------------------------------------------------
+
+    project_start = pd.Timestamp(START_DATE)
+
+    project_end = pd.Timestamp(END_DATE)
+
+    opening_dates = project_start + pd.to_timedelta(
+        rng.integers(
+            0,
+            (project_end - project_start).days + 1,
+            size=NUMBER_OF_STORES,
+        ),
+        unit="D",
+    )
+
+    # ---------------------------------------------------------
+    # Channel
+    # ---------------------------------------------------------
+
+    channel = np.where(
+        store_type == "E-commerce",
+        "E-commerce",
+        "Physical",
+    )
+
+    # ---------------------------------------------------------
+    # Store demand factor
+    # ---------------------------------------------------------
+
+    store_type_factor = np.array(
+        [STORE_TYPE_DEMAND_FACTORS[selected_type] for selected_type in store_type]
+    )
+
+    region_factor = np.array(
+        [REGION_DEMAND_FACTORS[selected_region] for selected_region in region]
+    )
+
+    store_demand_factor = store_type_factor * region_factor
+
+    store_demand_factor = np.round(
+        store_demand_factor,
+        2,
+    )
+
+    # ---------------------------------------------------------
+    # Build store dimension
+    # ---------------------------------------------------------
+
+    dim_store = pd.DataFrame(
+        {
+            "store_id": store_ids,
+            "store_name": store_names,
+            "city": city,
+            "region": region,
+            "store_type": store_type,
+            "opening_date": opening_dates,
+            "store_size_sqm": store_size_sqm,
+            "channel": channel,
+            "store_demand_factor": store_demand_factor,
+        }
+    )
+
+    return dim_store
 
 
 def generate_dim_customer():
@@ -552,100 +696,133 @@ def generate_all_data():
 
 
 if __name__ == "__main__":
-    dim_product = generate_dim_product()
+    dim_store = generate_dim_store()
 
-    expected_rows = NUMBER_OF_PRODUCTS
+    expected_rows = NUMBER_OF_STORES
 
     # ---------------------------------------------------------
     # Basic validation
     # ---------------------------------------------------------
 
-    assert len(dim_product) == expected_rows
+    assert len(dim_store) == expected_rows
 
-    assert dim_product["product_id"].is_unique
+    assert dim_store["store_id"].is_unique
 
-    assert not dim_product["product_id"].isna().any()
+    assert not dim_store["store_id"].isna().any()
 
-    assert not dim_product["category"].isna().any()
+    assert not dim_store["store_name"].isna().any()
 
-    assert not dim_product["subcategory"].isna().any()
+    assert not dim_store["city"].isna().any()
 
-    assert not dim_product["supplier_id"].isna().any()
+    assert not dim_store["region"].isna().any()
 
-    assert not dim_product["unit_cost"].isna().any()
+    assert not dim_store["store_type"].isna().any()
 
-    assert not dim_product["selling_price"].isna().any()
+    assert not dim_store["opening_date"].isna().any()
 
-    assert not dim_product["demand_class"].isna().any()
+    assert not dim_store["store_size_sqm"].isna().any()
 
-    assert not dim_product["demand_trajectory"].isna().any()
+    assert not dim_store["channel"].isna().any()
+
+    assert not dim_store["store_demand_factor"].isna().any()
 
     # ---------------------------------------------------------
     # Business-rule validation
     # ---------------------------------------------------------
 
-    assert (dim_product["unit_cost"] > 0).all()
+    assert (dim_store["store_size_sqm"] > 0).all()
 
-    assert (dim_product["selling_price"] > dim_product["unit_cost"]).all()
+    assert (dim_store["store_demand_factor"] > 0).all()
 
-    assert (dim_product["shelf_life_days"] > 0).all()
+    assert (dim_store["opening_date"] >= pd.Timestamp(START_DATE)).all()
 
-    assert (dim_product["base_demand"] > 0).all()
+    assert (dim_store["opening_date"] <= pd.Timestamp(END_DATE)).all()
 
     # ---------------------------------------------------------
-    # Margin validation
+    # Region-city consistency
     # ---------------------------------------------------------
 
-    calculated_margin = (
-        dim_product["selling_price"] - dim_product["unit_cost"]
-    ) / dim_product["selling_price"]
+    for _, row in dim_store.iterrows():
+        assert row["city"] in REGION_CITIES[row["region"]]
 
-    assert (calculated_margin >= PRODUCT_MARGIN_RANGE[0] - 0.01).all()
+    # ---------------------------------------------------------
+    # Channel consistency
+    # ---------------------------------------------------------
 
-    assert (calculated_margin <= PRODUCT_MARGIN_RANGE[1] + 0.01).all()
+    ecommerce_check = (
+        dim_store.loc[
+            dim_store["store_type"] == "E-commerce",
+            "channel",
+        ]
+        == "E-commerce"
+    ).all()
+
+    physical_check = (
+        dim_store.loc[
+            dim_store["store_type"] != "E-commerce",
+            "channel",
+        ]
+        == "Physical"
+    ).all()
+
+    assert ecommerce_check
+    assert physical_check
+
+    # ---------------------------------------------------------
+    # Store type / demand factor validation
+    # ---------------------------------------------------------
+
+    expected_demand_factor = dim_store["store_type"].map(
+        STORE_TYPE_DEMAND_FACTORS
+    ) * dim_store["region"].map(REGION_DEMAND_FACTORS)
+
+    assert np.allclose(
+        dim_store["store_demand_factor"],
+        expected_demand_factor.round(2),
+    )
 
     # ---------------------------------------------------------
     # Output
     # ---------------------------------------------------------
 
     print("=" * 60)
-    print("dim_product Validation")
+    print("dim_store Validation")
     print("=" * 60)
 
-    print(f"PASS: Row count = {len(dim_product):,}")
+    print(f"PASS: Row count = {len(dim_store):,}")
 
-    print("PASS: Product IDs are unique.")
+    print("PASS: Store IDs are unique.")
 
-    print("PASS: No missing product IDs.")
+    print("PASS: No missing store IDs.")
 
-    print("PASS: No missing categories.")
+    print("PASS: No missing store names.")
 
-    print("PASS: No missing supplier IDs.")
+    print("PASS: No missing cities.")
 
-    print("PASS: Unit costs are positive.")
+    print("PASS: No missing regions.")
 
-    print("PASS: Selling prices exceed unit costs.")
+    print("PASS: Store sizes are positive.")
 
-    print("PASS: Base demand values are positive.")
+    print("PASS: Opening dates are within the project period.")
 
-    print("PASS: Product margins are within configured range.")
+    print("PASS: Region-city relationships are valid.")
 
-    print("\nCategory Distribution:")
+    print("PASS: Channel assignments are valid.")
 
-    print(dim_product["category"].value_counts().sort_index())
+    print("PASS: Store demand factors are calculated correctly.")
 
-    print("\nDemand Class Distribution:")
+    print("\nStore Type Distribution:")
 
-    print(dim_product["demand_class"].value_counts().sort_index())
+    print(dim_store["store_type"].value_counts().sort_index())
 
-    print("\nDemand Trajectory Distribution:")
+    print("\nRegion Distribution:")
 
-    print(dim_product["demand_trajectory"].value_counts().sort_index())
+    print(dim_store["region"].value_counts().sort_index())
 
-    print("\nProduct Status Distribution:")
+    print("\nChannel Distribution:")
 
-    print(dim_product["product_status"].value_counts().sort_index())
+    print(dim_store["channel"].value_counts().sort_index())
 
-    print("\nSample Products:")
+    print("\nSample Stores:")
 
-    print(dim_product.head(10).to_string(index=False))
+    print(dim_store.head(10).to_string(index=False))
