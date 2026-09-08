@@ -793,33 +793,29 @@ The inventory generation framework currently includes:
 
 ---
 
-# 🧠 Actual Demand Calibration
+### Actual Demand Calibration
 
-A critical modeling step was implemented before continuing with replenishment and stockout logic.
+Historical demand was calculated at the product-store level using:
 
-The initial inventory model used theoretical demand:
+- Total sales units
+- Number of active selling days
+- Calendar-day average demand
+- Active-day demand velocity
 
-```text
-Base Demand × Store Demand Factor
-```
+Because the synthetic sales dataset is sparse relative to the full
+product-store-day inventory calendar, active-day demand velocity is used
+as the baseline demand rate for inventory simulation.
 
-However, comparison with the actual generated sales revealed a major scale mismatch.
+Validation:
 
-The synthetic sales dataset contains:
+- Product-store combinations: 10,000
+- Product-store combinations with sales: 7,819
+- Mean active-day demand velocity: 2.36 units/day
+- Median active-day demand velocity: 1.73 units/day
+- Maximum active-day demand velocity: 8.49 units/day
 
-```text
-125,000 transactions
-over
-1,096 days
-```
-
-across:
-
-```text
-10,000 product-store combinations
-```
-
-Therefore, the actual observed demand per product-store combination is much lower than the theoretical `base_demand`.
+This calibration provides a more realistic demand basis for inventory
+replenishment modeling.
 
 ### Actual Demand Formula
 

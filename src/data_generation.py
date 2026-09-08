@@ -960,48 +960,61 @@ def generate_fact_inventory(
     print(f"Days without sales: {(daily_calendar['sales_units'] == 0).sum():,}")
 
     # ============================================================
-    # Step 9: Calculate actual average daily demand
+    # Step 9: Calculate historical demand metrics
     # ============================================================
 
-    actual_demand = (
-        fact_sales.groupby(
-            [
-                "store_id",
-                "product_id",
-            ],
-            as_index=False,
-        )["quantity"]
-        .sum()
-        .rename(columns={"quantity": "total_sales_units"})
+    # Total calendar days in the project horizon.
+    number_of_days = len(dim_date)
+
+    actual_demand = fact_sales.groupby(
+        [
+            "store_id",
+            "product_id",
+        ],
+        as_index=False,
+    ).agg(
+        total_sales_units=(
+            "quantity",
+            "sum",
+        ),
+        sales_days=(
+            "transaction_date",
+            "nunique",
+        ),
     )
 
-    number_of_days = dim_date["date"].nunique()
-
+    # Calendar-day average demand
     actual_demand["actual_avg_daily_demand"] = (
         actual_demand["total_sales_units"] / number_of_days
     )
 
-    print("\nActual demand summary:")
+    # Demand velocity on active selling days
+    actual_demand["active_day_demand_rate"] = (
+        actual_demand["total_sales_units"] / actual_demand["sales_days"]
+    )
+
+    print("\nHistorical demand summary:")
 
     print(
         actual_demand[
             [
                 "total_sales_units",
+                "sales_days",
                 "actual_avg_daily_demand",
+                "active_day_demand_rate",
             ]
         ].describe()
     )
-
-    # ============================================================
-    # Step 9B: Merge actual demand into inventory calendar
-    # ============================================================
 
     daily_calendar = daily_calendar.merge(
         actual_demand[
             [
                 "store_id",
                 "product_id",
+                "total_sales_units",
+                "sales_days",
                 "actual_avg_daily_demand",
+                "active_day_demand_rate",
             ]
         ],
         on=[
@@ -1016,17 +1029,483 @@ def generate_fact_inventory(
         "actual_avg_daily_demand"
     ].fillna(0)
 
+    daily_calendar["active_day_demand_rate"] = daily_calendar[
+        "active_day_demand_rate"
+    ].fillna(0)
+
     # ============================================================
     # Step 9C: Create calibrated demand rate
     # ============================================================
 
-    daily_calendar["demand_rate"] = daily_calendar["actual_avg_daily_demand"]
+    daily_calendar["demand_rate"] = daily_calendar["active_day_demand_rate"]
 
     print("\nCalibrated demand summary:")
 
     print(daily_calendar["demand_rate"].describe())
 
-    return None
+    # ============================================================
+    # Step 10A: Recalibrate initial inventory
+    # ============================================================
+    #
+    # Initial inventory is now based on actual historical
+    # average daily demand rather than theoretical demand.
+    #
+    # Formula:
+    #
+    # Initial Stock =
+    # Actual Daily Demand × Initial Inventory Days
+    #
+    # This prevents excessive starting inventory caused by
+    # theoretical demand assumptions.
+    # ============================================================
+
+    daily_calendar["initial_inventory_days"] = daily_calendar["demand_class"].map(
+        INITIAL_INVENTORY_DAYS
+    )
+
+    daily_calendar["initial_opening_stock"] = (
+        (daily_calendar["demand_rate"] * daily_calendar["initial_inventory_days"])
+        .round()
+        .astype(int)
+    )
+
+    # Minimum stock floor
+    daily_calendar["initial_opening_stock"] = daily_calendar[
+        "initial_opening_stock"
+    ].clip(lower=1)
+
+    print("\nRecalibrated initial inventory summary:")
+
+    print(daily_calendar["initial_opening_stock"].describe())
+
+    # ============================================================
+    # Step 10B: Calculate safety stock
+    # ============================================================
+
+    daily_calendar["safety_stock_days"] = daily_calendar["demand_class"].map(
+        SAFETY_STOCK_DAYS
+    )
+
+    daily_calendar["safety_stock_units"] = (
+        daily_calendar["demand_rate"] * daily_calendar["safety_stock_days"]
+    )
+
+    daily_calendar["safety_stock_units"] = daily_calendar["safety_stock_units"].clip(
+        lower=0
+    )
+
+    print("\nSafety stock summary:")
+
+    print(daily_calendar["safety_stock_units"].describe())
+
+    # ============================================================
+    # Step 10C: Replenishment review period
+    # ============================================================
+
+    daily_calendar["replenishment_interval_days"] = daily_calendar["demand_class"].map(
+        REPLENISHMENT_INTERVAL_DAYS
+    )
+
+    # ============================================================
+    # Step 10D: Calculate reorder point
+    # ============================================================
+    #
+    # ROP =
+    # Demand during lead time + safety stock
+    #
+    # ============================================================
+
+    daily_calendar["reorder_point"] = (
+        daily_calendar["demand_rate"] * daily_calendar["lead_time_days"]
+        + daily_calendar["safety_stock_units"]
+    )
+
+    daily_calendar["reorder_point"] = daily_calendar["reorder_point"].clip(lower=0)
+
+    print("\nReorder point summary:")
+
+    print(daily_calendar["reorder_point"].describe())
+
+    # ============================================================
+    # Step 10E: Calculate target stock level
+    # ============================================================
+
+    daily_calendar["target_stock_level"] = (
+        (
+            daily_calendar["demand_rate"]
+            * (
+                daily_calendar["lead_time_days"]
+                + daily_calendar["replenishment_interval_days"]
+                + daily_calendar["safety_stock_days"]
+            )
+        )
+        .round()
+        .astype(int)
+    )
+
+    daily_calendar["target_stock_level"] = daily_calendar["target_stock_level"].clip(
+        lower=0
+    )
+
+    print("\nTarget stock level summary:")
+
+    print(daily_calendar["target_stock_level"].describe())
+
+    # ============================================================
+    # Step 10F: Identify replenishment review dates
+    # ============================================================
+
+    daily_calendar["days_since_start"] = (
+        daily_calendar["date"] - daily_calendar["date"].min()
+    ).dt.days
+
+    daily_calendar["is_replenishment_review"] = (
+        daily_calendar["days_since_start"]
+        % daily_calendar["replenishment_interval_days"]
+        == 0
+    )
+
+    print("\nReplenishment review events:")
+
+    print(daily_calendar["is_replenishment_review"].sum())
+
+    # ============================================================
+    # Step 10G: Planned replenishment quantity
+    # ============================================================
+
+    daily_calendar["planned_order_quantity"] = daily_calendar["target_stock_level"]
+
+    # Orders only occur on review dates
+    daily_calendar["planned_order_quantity"] = daily_calendar[
+        "planned_order_quantity"
+    ].where(
+        daily_calendar["is_replenishment_review"],
+        0,
+    )
+
+    # Respect supplier MOQ
+    daily_calendar["planned_order_quantity"] = np.where(
+        daily_calendar["planned_order_quantity"] > 0,
+        np.maximum(
+            daily_calendar["planned_order_quantity"],
+            daily_calendar["minimum_order_qty"],
+        ),
+        0,
+    )
+
+    daily_calendar["planned_order_quantity"] = daily_calendar[
+        "planned_order_quantity"
+    ].astype(int)
+
+    print("\nPlanned order quantity summary:")
+
+    print(
+        daily_calendar.loc[
+            daily_calendar["planned_order_quantity"] > 0,
+            "planned_order_quantity",
+        ].describe()
+    )
+
+    # ============================================================
+    # Step 10H: Calculate expected receipt date
+    # ============================================================
+
+    daily_calendar["expected_receipt_date"] = daily_calendar["date"] + pd.to_timedelta(
+        daily_calendar["lead_time_days"],
+        unit="D",
+    )
+
+    print("\nExpected receipt dates calculated.")
+
+    # ============================================================
+    # Step 10I: Create replenishment orders
+    # ============================================================
+
+    replenishment_orders = daily_calendar.loc[
+        daily_calendar["planned_order_quantity"] > 0,
+        [
+            "date",
+            "store_id",
+            "product_id",
+            "supplier_id",
+            "planned_order_quantity",
+            "lead_time_days",
+            "expected_receipt_date",
+        ],
+    ].copy()
+
+    replenishment_orders = replenishment_orders.rename(
+        columns={
+            "date": "order_date",
+            "planned_order_quantity": "order_quantity",
+        }
+    )
+
+    print(f"\nReplenishment orders created: {len(replenishment_orders):,}")
+
+    print("\nReplenishment order preview:")
+
+    print(replenishment_orders.head())
+
+    # ============================================================
+    # Step 10J: Convert replenishment orders into receipts
+    # ============================================================
+
+    replenishment_receipts = (
+        replenishment_orders.groupby(
+            [
+                "expected_receipt_date",
+                "store_id",
+                "product_id",
+            ],
+            as_index=False,
+        )["order_quantity"]
+        .sum()
+        .rename(
+            columns={
+                "expected_receipt_date": "date",
+                "order_quantity": "receipts",
+            }
+        )
+    )
+
+    print(f"\nReceipt events created: {len(replenishment_receipts):,}")
+
+    # ============================================================
+    # Step 10K: Merge receipts into inventory calendar
+    # ============================================================
+
+    daily_calendar = daily_calendar.merge(
+        replenishment_receipts,
+        on=[
+            "date",
+            "store_id",
+            "product_id",
+        ],
+        how="left",
+    )
+
+    daily_calendar["receipts"] = daily_calendar["receipts"].fillna(0).astype(int)
+
+    print("\nReceipt summary:")
+
+    print(daily_calendar["receipts"].describe())
+
+    # ============================================================
+    # Step 11A: Initialize inventory event fields
+    # ============================================================
+
+    daily_calendar["transfers_in"] = 0
+
+    daily_calendar["transfers_out"] = 0
+
+    daily_calendar["returns_units"] = 0
+
+    daily_calendar["damaged_units"] = 0
+
+    daily_calendar["inventory_adjustments"] = 0
+
+    # ============================================================
+    # Step 11B: Sort inventory records chronologically
+    # ============================================================
+
+    daily_calendar = daily_calendar.sort_values(
+        [
+            "store_id",
+            "product_id",
+            "date",
+        ]
+    ).reset_index(drop=True)
+
+    # ============================================================
+    # Step 11C: Calculate daily inventory movement
+    # ============================================================
+
+    daily_calendar["net_inventory_change"] = (
+        daily_calendar["receipts"]
+        + daily_calendar["transfers_in"]
+        - daily_calendar["transfers_out"]
+        - daily_calendar["sales_units"]
+        + daily_calendar["returns_units"]
+        - daily_calendar["damaged_units"]
+        + daily_calendar["inventory_adjustments"]
+    )
+
+    # ============================================================
+    # Step 11D: Calculate closing inventory
+    # ============================================================
+
+    daily_calendar["closing_stock"] = (
+        daily_calendar["initial_opening_stock"]
+        + daily_calendar.groupby(
+            [
+                "store_id",
+                "product_id",
+            ]
+        )["net_inventory_change"].cumsum()
+    )
+
+    daily_calendar["closing_stock"] = (
+        daily_calendar["closing_stock"].round().astype(int)
+    )
+
+    # ============================================================
+    # Step 11E: Calculate opening inventory
+    # ============================================================
+
+    previous_closing_stock = daily_calendar.groupby(
+        [
+            "store_id",
+            "product_id",
+        ]
+    )["closing_stock"].shift(1)
+
+    daily_calendar["opening_stock"] = previous_closing_stock.fillna(
+        daily_calendar["initial_opening_stock"]
+    )
+
+    daily_calendar["opening_stock"] = (
+        daily_calendar["opening_stock"].round().astype(int)
+    )
+
+    # ============================================================
+    # Step 11F-1: Inventory continuity validation
+    # ============================================================
+
+    previous_closing_stock = daily_calendar.groupby(
+        [
+            "store_id",
+            "product_id",
+        ]
+    )["closing_stock"].shift(1)
+
+    has_previous_day = previous_closing_stock.notna()
+
+    continuity_check = daily_calendar["opening_stock"].eq(previous_closing_stock)
+
+    continuity_failures = (continuity_check[has_previous_day] == False).sum()
+
+    print("\nInventory continuity validation:")
+    print(f"Rows checked: {has_previous_day.sum():,}")
+    print(f"Continuity failures: {continuity_failures:,}")
+
+    # ============================================================
+    # Step 11F-2: Inventory reconciliation validation
+    # ============================================================
+
+    calculated_closing = (
+        daily_calendar["opening_stock"] + daily_calendar["net_inventory_change"]
+    )
+
+    reconciliation_failures = (
+        daily_calendar["closing_stock"].ne(calculated_closing)
+    ).sum()
+
+    print("\nInventory reconciliation validation:")
+
+    print(f"Reconciliation failures: {reconciliation_failures:,}")
+
+    # ============================================================
+    # Step 11F-3: Negative inventory validation
+    # ============================================================
+
+    negative_inventory_rows = (daily_calendar["closing_stock"] < 0).sum()
+
+    negative_inventory_rate = negative_inventory_rows / len(daily_calendar)
+
+    print("\nNegative inventory validation:")
+
+    print(f"Negative inventory rows: {negative_inventory_rows:,}")
+
+    print(f"Negative inventory rate: {negative_inventory_rate:.2%}")
+
+    # ============================================================
+    # Step 12A: Stockout events
+    # ============================================================
+
+    daily_calendar["stockout_event"] = daily_calendar["closing_stock"] <= 0
+
+    # ============================================================
+    # Step 12B: Low-stock events
+    # ============================================================
+
+    daily_calendar["low_stock_event"] = (
+        daily_calendar["closing_stock"] <= daily_calendar["reorder_point"]
+    )
+
+    # ============================================================
+    # Step 12C: Receipt events
+    # ============================================================
+
+    daily_calendar["receipt_event"] = daily_calendar["receipts"] > 0
+
+    # ============================================================
+    # Step 12D: Sales events
+    # ============================================================
+
+    daily_calendar["sales_event"] = daily_calendar["sales_units"] > 0
+
+    # ============================================================
+    # Step 12E: Replenishment order events
+    # ============================================================
+
+    daily_calendar["replenishment_order_event"] = (
+        daily_calendar["planned_order_quantity"] > 0
+    )
+
+    # ============================================================
+    # Step 12F: Inventory coverage days
+    # ============================================================
+
+    daily_calendar["inventory_coverage_days"] = np.where(
+        daily_calendar["demand_rate"] > 0,
+        daily_calendar["closing_stock"] / daily_calendar["demand_rate"],
+        np.nan,
+    )
+
+    # ============================================================
+    # Step 12G: Inventory status
+    # ============================================================
+
+    daily_calendar["inventory_status"] = np.select(
+        [
+            daily_calendar["closing_stock"] <= 0,
+            daily_calendar["closing_stock"] <= daily_calendar["reorder_point"],
+        ],
+        [
+            "Stockout",
+            "Low Stock",
+        ],
+        default="Healthy",
+    )
+
+    # ============================================================
+    # Step 12H: Final inventory preview
+    # ============================================================
+
+    print("\nInventory status distribution:")
+
+    print(daily_calendar["inventory_status"].value_counts())
+
+    print("\nInventory event summary:")
+
+    print(
+        {
+            "Replenishment Orders": int(
+                daily_calendar["replenishment_order_event"].sum()
+            ),
+            "Receipt Events": int(daily_calendar["receipt_event"].sum()),
+            "Sales Events": int(daily_calendar["sales_event"].sum()),
+            "Low Stock Events": int(daily_calendar["low_stock_event"].sum()),
+            "Stockout Events": int(daily_calendar["stockout_event"].sum()),
+        }
+    )
+
+    print("\nInventory coverage summary:")
+
+    print(daily_calendar["inventory_coverage_days"].describe())
+
+    return daily_calendar
 
 
 # ============================================================
