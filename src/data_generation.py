@@ -2,7 +2,7 @@
 # GulfMart Retail Inventory Analytics
 # Synthetic Dataset Generator
 # ============================================================
-
+# %%
 """
 Generate a realistic synthetic retail dataset for
 inventory and sales analytics.
@@ -16,7 +16,7 @@ Generation pipeline:
 5. Validate generated data
 6. Save datasets to CSV
 """
-
+# %%
 # Add the imports
 
 from pathlib import Path
@@ -70,12 +70,14 @@ from data_generation_config import (
     DEMAND_SPIKE_FACTOR,
     INJECT_DATA_QUALITY_ISSUES,
     DATA_QUALITY_ISSUE_PROBABILITY,
+    REPLENISHMENT_INTERVAL_DAYS,
 )
+
 
 # ============================================================
 # Random Number Generator
 # ============================================================
-
+# %%
 rng = np.random.default_rng(RANDOM_SEED)
 
 # ============================================================
@@ -83,6 +85,7 @@ rng = np.random.default_rng(RANDOM_SEED)
 # ============================================================
 
 
+# %%
 def generate_dim_date():
     """Generate the date dimension."""
 
@@ -139,6 +142,7 @@ def generate_dim_date():
     return dim_date
 
 
+# %%
 def generate_dim_supplier():
     """Generate the supplier dimension."""
 
@@ -189,6 +193,7 @@ def generate_dim_supplier():
     return dim_supplier
 
 
+# %%
 def generate_dim_product():
     """Generate the product dimension."""
 
@@ -461,6 +466,7 @@ def generate_dim_product():
     return dim_product
 
 
+# %%
 def generate_dim_store():
     """Generate the store dimension."""
 
@@ -610,6 +616,7 @@ def generate_dim_store():
     return dim_store
 
 
+# %%
 def generate_dim_customer():
     """Generate the customer dimension."""
 
@@ -795,9 +802,239 @@ def generate_dim_customer():
     return dim_customer
 
 
+# %%
+def generate_fact_inventory(
+    fact_sales,
+    dim_product,
+    dim_store,
+    dim_supplier,
+    dim_date,
+):
+    """
+    Generate daily inventory records
+    at the product-store level.
+    """
+
+    print("\nGenerating fact_inventory...")
+
+    # ============================================================
+    # Step 1: Aggregate daily sales
+    # ============================================================
+
+    daily_sales = (
+        fact_sales.groupby(
+            [
+                "transaction_date",
+                "store_id",
+                "product_id",
+            ],
+            as_index=False,
+        )["quantity"]
+        .sum()
+        .rename(columns={"quantity": "sales_units"})
+    )
+
+    print(f"Daily sales combinations: {len(daily_sales):,}")
+
+    # ============================================================
+    # Step 2: Create product-store combinations
+    # ============================================================
+
+    product_store = dim_product[
+        [
+            "product_id",
+            "supplier_id",
+            "demand_class",
+            "base_demand",
+        ]
+    ].merge(
+        dim_store[
+            [
+                "store_id",
+                "store_demand_factor",
+            ]
+        ],
+        how="cross",
+    )
+
+    print(f"Product-store combinations: {len(product_store):,}")
+
+    # ============================================================
+    # Step 5: Add supplier information
+    # ============================================================
+
+    product_store = product_store.merge(
+        dim_supplier[
+            [
+                "supplier_id",
+                "lead_time_days",
+                "minimum_order_qty",
+                "supplier_status",
+            ]
+        ],
+        on="supplier_id",
+        how="left",
+        validate="many_to_one",
+    )
+
+    print(
+        f"Missing supplier lead times: {product_store['lead_time_days'].isna().sum():,}"
+    )
+
+    print(
+        f"Missing minimum order quantities: "
+        f"{product_store['minimum_order_qty'].isna().sum():,}"
+    )
+
+    # ============================================================
+    # Step 6: Calculate initial inventory assumptions
+    # ============================================================
+
+    product_store["initial_inventory_days"] = product_store["demand_class"].map(
+        INITIAL_INVENTORY_DAYS
+    )
+
+    product_store["expected_daily_demand"] = (
+        product_store["base_demand"] * product_store["store_demand_factor"]
+    )
+
+    product_store["initial_opening_stock"] = (
+        (
+            product_store["expected_daily_demand"]
+            * product_store["initial_inventory_days"]
+        )
+        .round()
+        .astype(int)
+    )
+
+    product_store["initial_opening_stock"] = product_store[
+        "initial_opening_stock"
+    ].clip(lower=1)
+
+    print("\nInitial opening stock summary:")
+
+    print(product_store["initial_opening_stock"].describe())
+
+    # ============================================================
+    # Step 7: Create daily product-store calendar
+    # ============================================================
+
+    daily_calendar = (
+        product_store.assign(key=1)
+        .merge(
+            dim_date[["date"]].assign(key=1),
+            on="key",
+        )
+        .drop(columns="key")
+    )
+
+    print(f"\nDaily inventory calendar rows: {len(daily_calendar):,}")
+
+    # ============================================================
+    # Step 8: Merge daily sales into inventory calendar
+    # ============================================================
+
+    daily_calendar = daily_calendar.merge(
+        daily_sales,
+        how="left",
+        left_on=[
+            "date",
+            "store_id",
+            "product_id",
+        ],
+        right_on=[
+            "transaction_date",
+            "store_id",
+            "product_id",
+        ],
+    )
+
+    daily_calendar["sales_units"] = daily_calendar["sales_units"].fillna(0).astype(int)
+
+    daily_calendar = daily_calendar.drop(columns=["transaction_date"])
+
+    print(f"\nRows after sales merge: {len(daily_calendar):,}")
+
+    print(f"Days with sales: {(daily_calendar['sales_units'] > 0).sum():,}")
+
+    print(f"Days without sales: {(daily_calendar['sales_units'] == 0).sum():,}")
+
+    # ============================================================
+    # Step 9: Calculate actual average daily demand
+    # ============================================================
+
+    actual_demand = (
+        fact_sales.groupby(
+            [
+                "store_id",
+                "product_id",
+            ],
+            as_index=False,
+        )["quantity"]
+        .sum()
+        .rename(columns={"quantity": "total_sales_units"})
+    )
+
+    number_of_days = dim_date["date"].nunique()
+
+    actual_demand["actual_avg_daily_demand"] = (
+        actual_demand["total_sales_units"] / number_of_days
+    )
+
+    print("\nActual demand summary:")
+
+    print(
+        actual_demand[
+            [
+                "total_sales_units",
+                "actual_avg_daily_demand",
+            ]
+        ].describe()
+    )
+
+    # ============================================================
+    # Step 9B: Merge actual demand into inventory calendar
+    # ============================================================
+
+    daily_calendar = daily_calendar.merge(
+        actual_demand[
+            [
+                "store_id",
+                "product_id",
+                "actual_avg_daily_demand",
+            ]
+        ],
+        on=[
+            "store_id",
+            "product_id",
+        ],
+        how="left",
+        validate="many_to_one",
+    )
+
+    daily_calendar["actual_avg_daily_demand"] = daily_calendar[
+        "actual_avg_daily_demand"
+    ].fillna(0)
+
+    # ============================================================
+    # Step 9C: Create calibrated demand rate
+    # ============================================================
+
+    daily_calendar["demand_rate"] = daily_calendar["actual_avg_daily_demand"]
+
+    print("\nCalibrated demand summary:")
+
+    print(daily_calendar["demand_rate"].describe())
+
+    return None
+
+
 # ============================================================
 # Fact Table Generators
 # ============================================================
+
+
+# %%
 
 
 def generate_fact_sales(
@@ -1153,22 +1390,12 @@ def generate_fact_sales(
     return sales
 
 
-def generate_fact_inventory(
-    dim_date,
-    dim_product,
-    dim_store,
-    dim_supplier,
-    fact_sales,
-):
-    """Generate daily inventory movements and closing stock."""
-    pass
-
-
 # ============================================================
 # Data Quality
 # ============================================================
 
 
+# %%
 def inject_data_quality_issues(
     dim_product,
     dim_store,
@@ -1181,6 +1408,7 @@ def inject_data_quality_issues(
     pass
 
 
+# %%
 def validate_generated_dataset(
     dim_date,
     dim_product,
@@ -1199,6 +1427,7 @@ def validate_generated_dataset(
 # ============================================================
 
 
+# %%
 def save_datasets(
     dim_date,
     dim_product,
@@ -1217,16 +1446,19 @@ def save_datasets(
 # ============================================================
 
 
+# %%
 def generate_all_data():
     """Run the complete synthetic dataset generation pipeline."""
     pass
 
 
+# %%
 if __name__ == "__main__":
     dim_date = generate_dim_date()
     dim_product = generate_dim_product()
     dim_store = generate_dim_store()
     dim_customer = generate_dim_customer()
+    dim_supplier = generate_dim_supplier()
 
     fact_sales = generate_fact_sales(
         dim_date,
@@ -1234,144 +1466,12 @@ if __name__ == "__main__":
         dim_store,
         dim_customer,
     )
-
-    print("=" * 60)
-    print("fact_sales Initial Test")
-    print("=" * 60)
-
-    print(f"PASS: Row count = {len(fact_sales):,}")
-
-    print(f"PASS: Unique transactions = {fact_sales['transaction_id'].nunique():,}")
-
-    print("\nColumns:")
-    print(fact_sales.columns.tolist())
-
-    print("\nSample Transactions:")
-    print("\n" + "=" * 60)
-    print("Business Behavior Validation")
-    print("=" * 60)
-
-    print("\nSales by Demand Class:")
-    print(
-        fact_sales.groupby("demand_class")["quantity"]
-        .sum()
-        .sort_values(ascending=False)
+    # %%
+    fact_inventory = generate_fact_inventory(
+        fact_sales,
+        dim_product,
+        dim_store,
+        dim_supplier,
+        dim_date,
     )
-
-    print("\nSales by Demand Trajectory:")
-    print(
-        fact_sales.groupby("demand_trajectory")["quantity"]
-        .sum()
-        .sort_values(ascending=False)
-    )
-
-    print("\nSales by Promotion:")
-    print(fact_sales.groupby("is_promotion")["quantity"].sum())
-
-    print("\nAverage Demand Intensity by Demand Class:")
-    print(
-        fact_sales.groupby("demand_class")["demand_intensity"]
-        .mean()
-        .sort_values(ascending=False)
-    )
-    print("\nAverage Quantity by Promotion:")
-    print(fact_sales.groupby("is_promotion")["quantity"].mean())
-    print("\nFinancial Validation:")
-
-assert (fact_sales["quantity"] > 0).all()
-
-assert (fact_sales["unit_price"] > 0).all()
-
-assert (fact_sales["gross_sales"] >= fact_sales["net_sales"]).all()
-
-assert (fact_sales["discount_amount"] >= 0).all()
-
-assert (fact_sales["net_sales"] > 0).all()
-
-assert (fact_sales["cogs"] > 0).all()
-
-assert np.allclose(
-    fact_sales["gross_sales"],
-    fact_sales["quantity"] * fact_sales["unit_price"],
-    atol=0.01,
-)
-
-assert np.allclose(
-    fact_sales["net_sales"],
-    fact_sales["gross_sales"] - fact_sales["discount_amount"],
-    atol=0.01,
-)
-
-assert np.allclose(
-    fact_sales["cogs"],
-    fact_sales["quantity"] * fact_sales["unit_cost"],
-    atol=0.01,
-)
-
-assert np.allclose(
-    fact_sales["gross_profit"],
-    fact_sales["net_sales"] - fact_sales["cogs"],
-    atol=0.01,
-)
-
-print("PASS: Quantity values are positive.")
-print("PASS: Unit prices are positive.")
-print("PASS: Gross Sales >= Net Sales.")
-print("PASS: Discount amounts are non-negative.")
-print("PASS: Net Sales are positive.")
-print("PASS: COGS values are positive.")
-print("PASS: Gross Sales calculation is correct.")
-print("PASS: Net Sales calculation is correct.")
-print("PASS: COGS calculation is correct.")
-print("PASS: Gross Profit calculation is correct.")
-
-print("\nKey Validation:")
-
-assert fact_sales["transaction_id"].is_unique
-assert fact_sales["product_id"].isin(dim_product["product_id"]).all()
-assert fact_sales["store_id"].isin(dim_store["store_id"]).all()
-assert fact_sales["customer_id"].isin(dim_customer["customer_id"]).all()
-
-print("PASS: Transaction IDs are unique.")
-print("PASS: All product IDs exist in dim_product.")
-print("PASS: All store IDs exist in dim_store.")
-print("PASS: All customer IDs exist in dim_customer.")
-
-
-print("\n" + "=" * 60)
-print("Seasonality Validation")
-print("=" * 60)
-
-print("\nAverage Quantity by Season:")
-print(fact_sales.groupby("season")["quantity"].mean().sort_values(ascending=False))
-
-print("\nAverage Quantity - Ramadan vs Normal:")
-print(fact_sales.groupby("is_ramadan")["quantity"].mean())
-
-print("\nAverage Quantity - Eid vs Normal:")
-print(fact_sales.groupby("is_eid_period")["quantity"].mean())
-
-print("\nTransactions by Season:")
-print(fact_sales["season"].value_counts().sort_index())
-
-print("\nRamadan/Eid Transaction Counts:")
-
-print("Ramadan transactions:", fact_sales["is_ramadan"].sum())
-
-print("Eid-period transactions:", fact_sales["is_eid_period"].sum())
-
-print(
-    "Both Ramadan and Eid:",
-    (fact_sales["is_ramadan"] & fact_sales["is_eid_period"]).sum(),
-)
-
-print("\nRamadan/Eid Validation:")
-
-print("Ramadan transactions:", fact_sales["is_ramadan"].sum())
-
-print("Eid-period transactions:", fact_sales["is_eid_period"].sum())
-
-print(
-    "Both Ramadan and Eid:",
-    (fact_sales["is_ramadan"] & fact_sales["is_eid_period"]).sum(),
-)
+# %%

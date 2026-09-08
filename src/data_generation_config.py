@@ -380,6 +380,12 @@ SAFETY_STOCK_DAYS = {
     "Slow-moving": 3,
 }
 
+REPLENISHMENT_INTERVAL_DAYS = {
+    "Fast-moving": 7,
+    "Medium-moving": 14,
+    "Slow-moving": 30,
+}
+
 INITIAL_INVENTORY_DAYS = {
     "Fast-moving": 14,
     "Medium-moving": 21,
