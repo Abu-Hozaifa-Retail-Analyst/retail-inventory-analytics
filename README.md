@@ -115,13 +115,14 @@ The project uses a synthetic dataset representing a GCC retail business.
 ### Current Dataset Scope
 
 | Entity                    |                   Volume |
-| ------------------------- | -----------------------: |
-| Stores                    |                       20 |
-| Products                  |                      500 |
-| Customers                 |                    5,000 |
-| Suppliers                 |                       30 |
-| Date Range                | 2023-01-01 to 2025-12-31 |
-| Target Sales Transactions |                  125,000 |
+| -------------------------- | -----------------------: |
+| Stores                     |                       20 |
+| Products                   |                      500 |
+| Customers                  |                    5,000 |
+| Suppliers                  |                       30 |
+| Date Range                 | 2023-01-01 to 2025-12-31 |
+| Target Sales Transactions  |                  125,000 |
+| Inventory Records (daily)  |               10,960,000 |
 
 The dataset is intentionally generated with realistic retail relationships rather than being a random collection of numbers.
 
@@ -163,8 +164,8 @@ dim_product ─── fact_inventory ─── dim_store
 
 #### Fact Tables
 
-* `fact_sales`
-* `fact_inventory` *(in progress)*
+* `fact_sales` — generated and validated
+* `fact_inventory` — generated and validated (persistence to disk in progress)
 
 ---
 
@@ -270,8 +271,20 @@ fact_sales
       ↓
 fact_inventory
       ↓
+Data Quality Injection
+      ↓
 Data Validation
+      ↓
+Save Datasets
 ```
+
+The full pipeline is now orchestrated through a single entry point:
+
+```python
+generate_all_data()
+```
+
+which calls every generation stage in sequence and returns all generated tables as a dictionary.
 
 ---
 
@@ -301,15 +314,6 @@ The date dimension includes fields such as:
 * Ramadan Flag
 * Eid Period Flag
 
-These fields will support:
-
-* Seasonal inventory analysis
-* Monthly trends
-* Ramadan analysis
-* Eid analysis
-* Year-over-year analysis
-* Demand trend analysis
-
 ### Validation
 
 ```text
@@ -332,21 +336,7 @@ The supplier dimension currently models:
 * Minimum Order Quantity
 * Supplier Status
 
-Supplier regions include:
-
-* Local
-* Regional
-* International
-
-Different supplier regions are assigned different synthetic lead-time ranges.
-
-This will later support:
-
-* Replenishment analysis
-* Lead-time risk
-* Supplier performance
-* Safety-stock calculations
-* Reorder-point analysis
+Supplier regions include Local, Regional, and International, each with different synthetic lead-time ranges.
 
 ### Validation
 
@@ -356,33 +346,15 @@ This will later support:
 ✓ Supplier regions generated
 ✓ Lead times generated
 ✓ Minimum order quantities generated
-✓ Supplier attributes available for inventory modeling
 ```
 
 ---
 
 # 📦 Product Dimension
 
-The product dimension currently contains:
-
-* Product ID
-* Product Name
-* Category
-* Subcategory
-* Brand
-* Supplier ID
-* Unit Cost
-* Selling Price
-* Product Status
-* Product Launch Date
-* Shelf Life
-* Demand Class
-* Demand Trajectory
-* Base Demand
+The product dimension currently contains Product ID, Name, Category, Subcategory, Brand, Supplier ID, Unit Cost, Selling Price, Product Status, Launch Date, Shelf Life, Demand Class, Demand Trajectory, and Base Demand.
 
 ### Demand Classes
-
-Products are classified into:
 
 ```text
 Fast-moving
@@ -392,8 +364,6 @@ Slow-moving
 
 ### Demand Trajectories
 
-Products can have:
-
 ```text
 Growing
 Stable
@@ -401,75 +371,33 @@ Declining
 Volatile
 ```
 
-These attributes support inventory prioritization and demand analysis.
-
 ### Product Categories
 
-The synthetic product catalog includes:
-
-* Grocery
-* Beverages
-* Personal Care
-* Household
-* Electronics
-* Fashion
-* Home & Living
-* Beauty
+Grocery, Beverages, Personal Care, Household, Electronics, Fashion, Home & Living, Beauty
 
 ### Validation
 
 ```text
 ✓ 500 products generated
-✓ Product IDs generated
 ✓ Product categories generated
 ✓ Supplier relationships generated
 ✓ Pricing attributes generated
-✓ Demand classes generated
-✓ Demand trajectories generated
+✓ Demand classes and trajectories generated
 ```
 
 ---
 
 # 🏪 Store Dimension
 
-The store dimension currently models different retail formats:
+Store formats: Hypermarket, Supermarket, Express, E-commerce, distributed across Riyadh, Jeddah, Makkah, Madinah, Dammam, Khobar, Tabuk, and Abha.
 
-* Hypermarket
-* Supermarket
-* Express
-* E-commerce
-
-Stores are distributed across synthetic GCC/Saudi-oriented locations including:
-
-* Riyadh
-* Jeddah
-* Makkah
-* Madinah
-* Dammam
-* Khobar
-* Tabuk
-* Abha
-
-Each store receives a synthetic demand factor based on:
-
-* Store type
-* Region
-* Retail format
-
-This supports:
-
-* Store-level inventory analysis
-* Stockout analysis
-* Store-to-store comparisons
-* Replenishment prioritization
+Each store has a synthetic demand factor based on store type and region.
 
 ### Validation
 
 ```text
 ✓ 20 stores generated
-✓ Store IDs generated
-✓ Store formats generated
-✓ Locations generated
+✓ Store formats and locations generated
 ✓ Store demand factors generated
 ```
 
@@ -477,42 +405,15 @@ This supports:
 
 # 👥 Customer Dimension
 
-The customer dimension currently contains **5,000 synthetic customers**.
+**5,000 synthetic customers** with Segment, Gender, Age Group, City, Tenure, Preferred Channel, Purchase Frequency Factor, Average Basket Factor, and Price Sensitivity.
 
-Customer attributes include:
-
-* Customer ID
-* Customer Segment
-* Gender
-* Age Group
-* City
-* Customer Start Date
-* Customer Tenure
-* Preferred Channel
-* Purchase Frequency Factor
-* Average Basket Factor
-* Price Sensitivity
-
-Customer segments include:
-
-```text
-Premium
-Regular
-Value
-New
-```
-
-These attributes support customer-driven demand analysis.
+Segments: Premium, Regular, Value, New.
 
 ### Validation
 
 ```text
-✓ 5,000 customers generated
-✓ Customer IDs unique
-✓ Customer attributes populated
-✓ Customer tenure calculated
-✓ Purchase frequency factors generated
-✓ Basket factors generated
+✓ 5,000 customers generated, IDs unique
+✓ Purchase frequency and basket factors generated
 ✓ Price sensitivity generated
 ```
 
@@ -520,151 +421,41 @@ These attributes support customer-driven demand analysis.
 
 # 💰 Sales Fact Table
 
-The `fact_sales` generation is currently completed and validated.
+`fact_sales` is completed and validated: **125,000 transactions**.
 
-### Current Volume
-
-```text
-125,000 transactions
-```
-
-Each transaction contains:
-
-* Transaction ID
-* Transaction Date
-* Product ID
-* Store ID
-* Customer ID
-* Quantity
-* Unit Price
-* Discount
-* Gross Sales
-* Net Sales
-* COGS
-* Gross Profit
-
-The generated sales model also contains analytical helper attributes such as:
-
-* Demand Class
-* Demand Trajectory
-* Demand Intensity
-* Season
-* Day-of-week factor
-* Seasonality factor
-* Promotion Flag
-* Demand Spike Flag
-
----
-
-
-
-# 📈 Sales Calculation Logic
-
-### Gross Sales
+### Sales Calculation Logic
 
 ```text
-Gross Sales = Quantity × Unit Price
+Gross Sales      = Quantity × Unit Price
+Discount Amount  = Gross Sales × Discount %
+Net Sales        = Gross Sales − Discount Amount
+COGS             = Quantity × Unit Cost
+Gross Profit     = Net Sales − COGS
 ```
 
-### Discount Amount
-
-```text
-Discount Amount = Gross Sales × Discount %
-```
-
-### Net Sales
-
-```text
-Net Sales = Gross Sales − Discount Amount
-```
-
-### COGS
-
-```text
-COGS = Quantity × Unit Cost
-```
-
-### Gross Profit
-
-```text
-Gross Profit = Net Sales − COGS
-```
-
-These calculations have been programmatically validated.
-
----
-
-# 🧠 Demand Modeling
-
-The sales generator models demand using multiple business factors.
-
-Conceptually:
+### Demand Modeling
 
 ```text
 Base Demand
-     ×
-Demand Class
-     ×
-Demand Trajectory
-     ×
-Store Demand
-     ×
-Customer Behavior
-     ×
-Day-of-Week
-     ×
-Seasonality
-     ×
-Promotion
-     ×
-Random Variation
-     ×
-Demand Spikes
+     × Demand Class
+     × Demand Trajectory
+     × Store Demand
+     × Customer Behavior
+     × Day-of-Week
+     × Seasonality
+     × Promotion
+     × Random Variation
+     × Demand Spikes
 ```
 
-This creates more realistic demand behavior than assigning completely random sales quantities.
-
----
-
-# 🏷️ Promotion Modeling
-
-Synthetic promotions are included in the sales model.
-
-Promotions have:
-
-* Promotion flag
-* Discount percentage
-* Demand lift
-
-Validation confirmed that promotional transactions have higher average quantities than non-promotional transactions.
-
-### Current Validation
+### Promotion Validation
 
 ```text
 Non-promotion average quantity ≈ 4.33
 Promotion average quantity     ≈ 4.97
 ```
 
-This relationship will later help analyze:
-
-> **Whether promotional demand contributes to stockout risk.**
-
----
-
-# 🌦️ Seasonality Modeling
-
-The model includes category-specific seasonal behavior.
-
-Seasonality is modeled across:
-
-* Winter
-* Spring
-* Summer
-* Autumn
-* Ramadan
-* Eid
-
-### Current Validation
+### Seasonality Validation
 
 ```text
 ✓ Summer has the highest average quantity among standard seasons
@@ -673,348 +464,195 @@ Seasonality is modeled across:
 ✓ Ramadan/Eid overlap = 0
 ```
 
-These features will later support seasonal demand and inventory analysis.
-
----
-
-# 🧪 Sales Data Validation
-
-The generated `fact_sales` data has undergone automated validation.
-
-### Structural Validation
+### Sales Data Validation
 
 ```text
-✓ 125,000 transactions
-✓ Transaction IDs are unique
-✓ Product IDs are valid
-✓ Store IDs are valid
-✓ Customer IDs are valid
-```
+Structural
+✓ 125,000 transactions, unique transaction IDs
+✓ Product / Store / Customer IDs valid
 
-### Financial Validation
+Financial
+✓ Quantity > 0, Unit Price > 0
+✓ Gross Sales ≥ Net Sales, Net Sales > 0, COGS > 0
+✓ All derived calculations verified correct
 
-```text
-✓ Quantity > 0
-✓ Unit Price > 0
-✓ Gross Sales ≥ Net Sales
-✓ Discount Amount ≥ 0
-✓ Net Sales > 0
-✓ COGS > 0
-✓ Gross Sales calculation correct
-✓ Net Sales calculation correct
-✓ COGS calculation correct
-✓ Gross Profit calculation correct
-```
-
-### Business Behavior Validation
-
-```text
-✓ Fast-moving demand > Medium-moving demand > Slow-moving demand
+Business Behavior
+✓ Fast-moving > Medium-moving > Slow-moving demand
 ✓ Promotions generate higher average quantities
-✓ Seasonal demand behavior is present
-✓ Ramadan demand uplift is present
-✓ Eid demand uplift is present
-✓ Ramadan/Eid overlap = 0
+✓ Seasonal / Ramadan / Eid demand uplift present
 ```
 
 ---
 
-# 📦 Inventory Analytics — In Progress
+# 📦 Inventory Analytics — Fact Table Generated & Validated
 
-The `fact_inventory` generation phase is now under development.
+`fact_inventory` generation is now **complete and validated** end-to-end.
 
-The intended inventory grain is:
-
-> **One row = one product × one store × one day**
-
-With:
+Grain: **one row = one product × one store × one day**
 
 ```text
-20 stores
-×
-500 products
-×
-1,096 days
-=
-10,960,000 product-store-day records
+20 stores × 500 products × 1,096 days = 10,960,000 rows
 ```
 
-The inventory model is designed to track:
+Inventory flow modeled as:
 
 ```text
 Opening Stock
-+
-Receipts
-+
-Transfers In
-−
-Transfers Out
-−
-Sales
-+
-Returns
-−
-Damaged Units
-±
-Inventory Adjustments
-=
-Closing Stock
++ Receipts
++ Transfers In
+− Transfers Out
+− Sales
++ Returns
+− Damaged Units
+± Inventory Adjustments
+= Closing Stock
 ```
-
-This allows the project to analyze inventory movement rather than simply looking at static stock levels.
-
----
-
-# 📊 Inventory Generation — Current Progress
-
-The inventory generation framework currently includes:
-
-* Daily sales aggregation
-* Product-store combinations
-* Supplier information
-* Lead times
-* Minimum order quantities
-* Initial inventory assumptions
-* Daily product-store calendar
-* Daily sales-to-inventory integration
-* Actual historical demand calculation
-* Calibrated demand rate
-
-### Current Inventory Validation
-
-```text
-✓ 122,173 daily sales combinations
-✓ 10,000 product-store combinations
-✓ 10,960,000 product-store-day calendar rows
-✓ Supplier lead times successfully matched
-✓ Minimum order quantities successfully matched
-✓ Daily sales successfully merged
-✓ Actual product-store demand calculated
-✓ Calibrated demand rate successfully created
-```
-
----
 
 ### Actual Demand Calibration
 
-Historical demand was calculated at the product-store level using:
-
-- Total sales units
-- Number of active selling days
-- Calendar-day average demand
-- Active-day demand velocity
-
-Because the synthetic sales dataset is sparse relative to the full
-product-store-day inventory calendar, active-day demand velocity is used
-as the baseline demand rate for inventory simulation.
-
-Validation:
-
-- Product-store combinations: 10,000
-- Product-store combinations with sales: 7,819
-- Mean active-day demand velocity: 2.36 units/day
-- Median active-day demand velocity: 1.73 units/day
-- Maximum active-day demand velocity: 8.49 units/day
-
-This calibration provides a more realistic demand basis for inventory
-replenishment modeling.
-
-### Actual Demand Formula
-
-For each product-store combination:
+Initial theoretical demand (`Base Demand × Store Demand Factor`) was found to overstate real demand, so inventory is calibrated against **observed historical sales** instead:
 
 ```text
-Actual Average Daily Demand
-=
-Total Historical Sales Units
-÷
-Number of Calendar Days
+Actual Average Daily Demand = Total Historical Sales Units ÷ Number of Calendar Days
+Active-Day Demand Rate      = Total Historical Sales Units ÷ Number of Active Selling Days
 ```
 
-This creates:
+`active_day_demand_rate` is used as the calibrated `demand_rate` driving all downstream inventory logic, since the synthetic sales dataset is sparse relative to the full product-store-day calendar.
 
 ```text
-actual_avg_daily_demand
+Product-store combinations: 10,000
+Product-store combinations with sales: 7,825
+Mean active-day demand rate: 2.33 units/day
+Median active-day demand rate: 1.75 units/day
+Max active-day demand rate: 8.39 units/day
 ```
 
-which is then merged into the daily inventory calendar as:
+### Recalibrated Initial Inventory
 
 ```text
-demand_rate
+Initial Stock = Calibrated Demand Rate × Initial Inventory Days (by demand class)
 ```
-
-### Current Calibration Results
 
 ```text
-Active product-store combinations: 7,819
-
-Average total historical sales:
-≈ 70.30 units
-
-Average actual daily demand:
-≈ 0.064 units
-
-Maximum actual daily demand:
-≈ 1.038 units
+count    10,960,000
+mean          35.25
+50%           34.00
+max          225.00
 ```
 
-### Important Modeling Finding
+Down from a theoretical-demand mean of ~115 units — confirming the recalibration meaningfully corrected over-stocking.
 
-The initial theoretical demand was substantially higher than the demand actually generated by the sales transaction volume.
+### Replenishment Logic
 
-Therefore, the inventory model is being recalibrated against **observed historical sales demand** before implementing:
+Implemented in full:
 
-* Initial inventory
-* Replenishment
-* Safety stock
-* Reorder points
-* Stockout simulation
-* Inventory coverage
-* Overstock analysis
+* **Safety stock** = demand rate × safety stock days (by demand class)
+* **Lead-time demand** = demand rate × supplier lead time
+* **Reorder point (ROP)** = lead-time demand + safety stock
+* **Review-period demand** = demand rate × replenishment interval
+* **Target stock level** = lead-time demand + review-period demand + safety stock
+* **Planned order quantity**, triggered only on periodic review dates, respecting each supplier's minimum order quantity (MOQ)
+* Orders converted into **receipt events** on their expected receipt date (`order date + lead time`)
 
-This prevents unrealistic inventory behavior caused by using an uncalibrated theoretical demand assumption.
+```text
+Replenishment review events: 818,440
+Replenishment orders created: 730,069
+Receipt events created: 730,069
+```
+
+### Daily Inventory Flow & Reconciliation
+
+Closing stock is computed as a running cumulative balance per product-store combination:
+
+```text
+Closing Stock = Initial Opening Stock + Σ(Net Inventory Change)
+Net Inventory Change = Receipts + Transfers In − Transfers Out − Sales + Returns − Damaged + Adjustments
+Opening Stock (day n) = Closing Stock (day n−1)
+```
+
+### Validation Results
+
+```text
+✓ Inventory continuity check   — 10,950,000 rows checked, 0 failures
+✓ Inventory reconciliation      — 0 failures
+✓ Negative inventory check      — 0 negative rows (0.00%)
+```
+
+### Inventory Status Distribution
+
+```text
+Healthy      10,926,211
+Low Stock        33,789
+Stockout               0
+```
+
+```text
+Replenishment Orders : 730,069
+Receipt Events        : 722,087
+Sales Events          : 122,236
+Low Stock Events      :  33,789
+Stockout Events       :       0
+```
+
+Zero real stockouts is an expected result of well-calibrated safety stock / reorder-point logic on synthetic demand — this will be a deliberate discussion point in the eventual Stockout Analysis notebook (e.g. testing what happens under tighter safety-stock assumptions or demand shocks).
 
 ---
 
-# 🔄 Inventory Modeling Approach
+# 🧪 Controlled Data-Quality Injection
 
-The inventory model will follow a sequential inventory-flow approach.
+To make the downstream data-cleaning notebook (`02_data_cleaning.ipynb`) meaningful, a small, controlled set of data-quality issues is deliberately injected **after** generation and validation of the core datasets — not into `fact_inventory`, to avoid contradicting the reconciliation/continuity checks above.
 
-Conceptually:
-
-```text
-Opening Stock
-      ↓
-+ Receipts
-      ↓
-− Sales
-      ↓
-+/- Inventory Events
-      ↓
-Closing Stock
-      ↓
-Next Day Opening Stock
-```
-
-The model will eventually enforce the continuity relationship:
+Implemented via `inject_data_quality_issues()`:
 
 ```text
-Previous Day Closing Stock
-=
-Current Day Opening Stock
+✓ Missing brand values injected into dim_product
+✓ Missing city values injected into dim_customer
+✓ Inconsistent city text formatting injected into dim_store (case + whitespace)
+✓ Missing supplier_name values injected into dim_supplier
+✓ Duplicate transactions injected into fact_sales
 ```
 
-This is important because inventory should behave as a continuous stock balance rather than as independent daily values.
-
----
-
-# ⚠️ Inventory Modeling Consideration
-
-The current inventory-generation stage identified an important issue:
-
-Initial inventory was originally calculated using theoretical demand:
-
-```text
-Base Demand × Store Demand Factor
-```
-
-This produced unrealistically high inventory coverage because actual sales volume is much smaller than the theoretical demand assumptions.
-
-Therefore:
-
-> **Replenishment logic will not be finalized until initial stock and demand rates are properly calibrated.**
-
-This is an intentional modeling-control step rather than a data failure.
+Controlled by `DATA_QUALITY_ISSUE_PROBABILITY` in `data_generation_config.py` (default 0.1%, scaled up for very small tables like `dim_store` so issues remain visible).
 
 ---
 
 # 📊 Planned Inventory KPIs
 
-The project will calculate and analyze:
-
 ### Core KPIs
 
-* Inventory Turnover
-* Sell-through %
-* Stockout Rate
-* In-stock Rate
-* Average Inventory
-* Inventory Value
-* Days of Inventory
-* Inventory Coverage Days
+Inventory Turnover · Sell-through % · Stockout Rate · In-stock Rate · Average Inventory · Inventory Value · Days of Inventory · Inventory Coverage Days
 
 ### Inventory Risk
 
-* Slow-moving Inventory
-* Dead Stock
-* Excess Inventory
-* Stockout Risk
-* Replenishment Risk
-* Aging Inventory
+Slow-moving Inventory · Dead Stock · Excess Inventory · Stockout Risk · Replenishment Risk · Aging Inventory
 
 ### Profitability
 
-* Gross Profit
-* Gross Margin %
-* GMROI
+Gross Profit · Gross Margin % · GMROI
 
 ### Replenishment
 
-* Safety Stock
-* Reorder Point
-* Lead Time
-* Minimum Order Quantity
-* Replenishment Priority
+Safety Stock · Reorder Point · Lead Time · Minimum Order Quantity · Replenishment Priority
 
 ---
 
 # 🔎 Planned Business Analysis
 
-The completed project will answer questions such as:
+**Inventory Availability** — Which products/stores experience the most stockouts? Which high-demand products are frequently unavailable?
 
-### Inventory Availability
+**Excess Inventory** — Which products/stores carry excessive or slow-moving stock?
 
-* Which products experience the most stockouts?
-* Which stores have the highest stockout rates?
-* Which high-demand products are frequently unavailable?
+**Product Analysis** — Which products drive the most sales/profit? Which have high demand but poor availability?
 
-### Excess Inventory
+**Store Analysis** — Which stores are overstocked or understocked? Where should inventory be transferred?
 
-* Which products have excessive inventory?
-* Which stores are carrying slow-moving stock?
-* Which products have very high inventory coverage?
+**Supplier Analysis** — Which suppliers have long lead times or create replenishment risk?
 
-### Product Analysis
-
-* Which products generate the most sales?
-* Which products generate the most profit?
-* Which products have high demand but poor availability?
-
-### Store Analysis
-
-* Which stores are overstocked?
-* Which stores experience frequent shortages?
-* Where should inventory be transferred?
-
-### Supplier Analysis
-
-* Which suppliers have long lead times?
-* Which suppliers create replenishment risk?
-* Which products are exposed to long lead-time dependency?
-
-### Replenishment
-
-* Which products should be reordered first?
-* What is the estimated reorder point?
-* Which products require higher safety stock?
+**Replenishment** — Which products should be reordered first, and at what safety-stock level?
 
 ---
 
 # 📊 Planned ABC Analysis
-
-Products will eventually be classified using ABC analysis based on business value.
-
-Example:
 
 ```text
 A → Highest-value products
@@ -1022,15 +660,7 @@ B → Medium-value products
 C → Lower-value products
 ```
 
-This will help prioritize inventory-management effort.
-
-The goal is not simply:
-
-> "Which products sell the most?"
-
-but:
-
-> **"Which products deserve the most inventory-management attention?"**
+Goal: not "which products sell the most" but **"which products deserve the most inventory-management attention."**
 
 ---
 
@@ -1057,124 +687,91 @@ but:
 
 # 🔄 Hybrid Analytics Architecture
 
-The project follows a hybrid approach rather than forcing every task into one tool.
+**Python** — synthetic data generation, profiling, cleaning, complex transformations, statistical/demand/inventory modeling.
 
-### Python
+**SQL Server** — structured storage, validation, joins, KPI calculations, reusable views, analytical queries.
 
-Used for:
-
-* Synthetic data generation
-* Data profiling
-* Data cleaning
-* Complex transformations
-* Statistical analysis
-* Demand modeling
-* Inventory modeling
-
-### SQL Server
-
-Used for:
-
-* Structured storage
-* Data validation
-* Joins
-* KPI calculations
-* Business analysis
-* Reusable views
-* Analytical queries
-
-### Power BI
-
-Used for:
-
-* KPI dashboards
-* Inventory health monitoring
-* Store analysis
-* Product analysis
-* Stockout visualization
-* Management reporting
-
-This reflects a practical retail analytics workflow.
+**Power BI** — KPI dashboards, inventory health monitoring, store/product analysis, stockout visualization, management reporting.
 
 ---
 
 # 🌱 Git Development
 
-The project is being developed incrementally using Git.
-
-Major completed development milestones include:
+The project is developed incrementally using Git, with each stage validated before the next.
 
 ```text
 Initialize retail inventory analytics project
-
 Add project README
-
 Add dataset generator module skeleton
-
 Implement date dimension generation
-
 Implement supplier dimension generation
-
 Implement product dimension generation
-
 Implement store dimension generation
-
 Implement customer dimension generation
-
 Implement fact sales generation
+Implement actual demand calibration for inventory generation
+Implement recalibrated initial inventory and replenishment logic
+Implement daily inventory flow, continuity & reconciliation validation
+Wire complete data generation pipeline (generate_all_data)
+Implement inject_data_quality_issues() for controlled data messiness
 ```
 
 ### Current Development Milestone
 
 ```text
-Implement actual demand calibration for inventory generation
+Implement validate_generated_dataset() and save_datasets()
 ```
-
-Each major development stage is validated before moving to the next stage.
 
 ---
-
-```
-Wire complete data generation pipeline (generate_all_data)
-```
 
 # 🚧 Project Status
 
 ## Completed
 
-* [X] Project structure
-* [X] Git/GitHub setup
-* [X] Python environment
-* [X] Requirements setup
-* [X] Data-generation configuration
-* [X] Date dimension
-* [X] Supplier dimension
-* [X] Product dimension
-* [X] Store dimension
-* [X] Customer dimension
-* [X] Sales fact generation
-* [X] Sales financial validation
-* [X] Demand behavior validation
-* [X] Promotion validation
-* [X] Seasonality validation
-* [X] Ramadan/Eid validation
-* [X] Product-store inventory calendar
-* [X] Daily sales aggregation for inventory
-* [X] Supplier information integration
-* [X] Actual historical demand calculation
-* [X] Demand-rate calibration
+* [x] Project structure
+* [x] Git/GitHub setup
+* [x] Python environment
+* [x] Requirements setup
+* [x] Data-generation configuration
+* [x] Date dimension
+* [x] Supplier dimension
+* [x] Product dimension
+* [x] Store dimension
+* [x] Customer dimension
+* [x] Sales fact generation
+* [x] Sales financial validation
+* [x] Demand behavior validation
+* [x] Promotion validation
+* [x] Seasonality validation
+* [x] Ramadan/Eid validation
+* [x] Product-store inventory calendar
+* [x] Daily sales aggregation for inventory
+* [x] Supplier information integration
+* [x] Actual historical demand calculation
+* [x] Demand-rate calibration
+* [x] Recalibrated initial inventory
+* [x] Safety stock / reorder point / target stock level logic
+* [x] Replenishment order & receipt generation
+* [x] Daily inventory flow (closing stock cumulative calculation)
+* [x] Inventory continuity validation (0 failures)
+* [x] Inventory reconciliation validation (0 failures)
+* [x] Negative inventory validation (0 rows)
+* [x] Stockout / low-stock / inventory status flags
+* [x] Full pipeline orchestration (`generate_all_data`)
+* [x] Controlled data-quality issue injection
+...
+- [x] validate_generated_dataset() — automated structural/financial/business/data-quality checks
 
 ## In Progress
 
-* [ ] Recalibrated initial inventory
-* [ ] Inventory replenishment logic
-* [ ] Inventory reconciliation
-* [ ] Inventory continuity validation
-* [ ] Inventory data-quality validation
-* [ ] Inventory KPI calculations
+* [ ] `validate_generated_dataset()` — automated structural/financial/business validation across all tables
+* [ ] `save_datasets()` — persist all generated tables to `data/raw/` as CSV
+* [ ] Remove/refactor dead `_run_sequential_inventory_simulation` (superseded by vectorized cumulative approach)
+- [ ] save_datasets() — persist all generated tables to data/raw/ as CSV
 
 ## Planned
 
+* [ ] Inventory KPI calculations
 * [ ] Stockout analysis
 * [ ] Overstock analysis
 * [ ] ABC analysis
@@ -1191,39 +788,43 @@ Wire complete data generation pipeline (generate_all_data)
 
 # 🧭 Current Development Roadmap
 
-The immediate inventory-development roadmap is:
-
 ```text
 Actual Sales
      ↓
 Actual Demand Calibration ✓
      ↓
-Recalibrate Initial Inventory
+Recalibrate Initial Inventory ✓
      ↓
-Build Replenishment Logic
+Build Replenishment Logic ✓
      ↓
-Calculate Daily Inventory Flow
+Calculate Daily Inventory Flow ✓
      ↓
-Validate Inventory Continuity
+Validate Inventory Continuity ✓
      ↓
-Validate Inventory Health
+Validate Inventory Health ✓
+     ↓
+Inject Controlled Data-Quality Issues ✓
+     ↓
+Validate Generated Dataset (structural / business rules)  ← current
+     ↓
+Implement save_datasets()
+     ↓
+Save Datasets to CSV
+     ↓
+Inventory KPIs
      ↓
 Stockout Analysis
      ↓
 Overstock Analysis
      ↓
-Inventory KPIs
-     ↓
 Replenishment Analysis
 ```
 
-The project will deliberately avoid introducing stockout and replenishment conclusions until the underlying inventory-flow model is calibrated and validated.
+The project will deliberately avoid introducing stockout and replenishment business conclusions until the underlying inventory-flow model is calibrated and validated — which it now is.
 
 ---
 
 # 💼 Business Value
-
-The final project is designed to demonstrate how a Retail Analyst can move from:
 
 ```text
 Raw Data
@@ -1241,29 +842,15 @@ Root Cause
 Business Action
 ```
 
-The goal is not simply to calculate KPIs.
+The goal is not simply to calculate KPIs. The goal is to answer:
 
-The goal is to answer:
-
-> **What is happening?**
-
-> **Why is it happening?**
-
-> **Which products/stores are affected?**
-
-> **What should the retailer do?**
-
-> **What business impact could the decision create?**
+> **What is happening? Why is it happening? Which products/stores are affected? What should the retailer do? What business impact could the decision create?**
 
 ---
 
 # ⚠️ Data Disclaimer
 
-This project uses **synthetic data** created specifically for portfolio and learning purposes.
-
-The locations, customers, products, suppliers, transactions, demand patterns, and financial values do not represent actual GulfMart Retail data or actual company performance.
-
-Business assumptions such as Ramadan/Eid periods, demand factors, supplier lead times, promotions, and seasonality are synthetic modeling assumptions.
+This project uses **synthetic data** created specifically for portfolio and learning purposes. The locations, customers, products, suppliers, transactions, demand patterns, and financial values do not represent actual GulfMart Retail data or actual company performance. Business assumptions such as Ramadan/Eid periods, demand factors, supplier lead times, promotions, and seasonality are synthetic modeling assumptions.
 
 ---
 
@@ -1271,990 +858,7 @@ Business assumptions such as Ramadan/Eid periods, demand factors, supplier lead 
 
 This project is part of a Retail Analytics portfolio demonstrating practical skills in:
 
-* Retail business analysis
-* Sales analytics
-* Inventory analytics
-* Demand analysis
-* Data quality
-* Python/Pandas
-* NumPy
-* SQL Server
-* Power BI
-* KPI development
-* Business problem solving
-* Git/GitHub
-* Data-driven decision making
-
----
-
-## ⭐ Key Portfolio Question
-
-> **Can data help a retailer keep the right products available at the right stores, reduce excess inventory, improve inventory efficiency, and protect profitability?**
-
-This project is designed to answer that questio
-
-# Retail Inventory Analytics
-
-## GulfMart Retail — Inventory Availability, Efficiency & Replenishment Analytics
-
-> **Portfolio Project | Retail Analytics | Python | Pandas | SQL Server | Power BI**
-
----
-
-## 📌 Project Overview
-
-This project analyzes inventory performance for a fictional GCC retailer, **GulfMart Retail**, with the objective of improving inventory availability, reducing excess stock, and supporting better replenishment decisions.
-
-The project is being developed as an end-to-end **Retail Inventory Analytics** solution using:
-
-* Python / Pandas for data generation, profiling, cleaning, and analytical preparation
-* SQL Server for structured data storage and business analysis
-* Power BI for interactive reporting and decision-making
-* Git/GitHub for version control and portfolio presentation
-
-The project uses a realistic synthetic retail dataset designed around GCC retail business scenarios.
-
----
-
-# 🎯 Business Problem
-
-GulfMart Retail is experiencing an inventory imbalance:
-
-* High-demand products may frequently go out of stock.
-* Low-demand products may remain in inventory for long periods.
-* Some stores may hold too much inventory while others face shortages.
-* Promotions and seasonal demand can create temporary demand spikes.
-* Long supplier lead times can increase replenishment risk.
-* Excess inventory ties up working capital.
-
-### Core Business Question
-
-> **Do we have the right products, in the right quantities, at the right stores, at the right time — while maintaining healthy inventory efficiency and profitability?**
-
----
-
-# 🎯 Project Objective
-
-The primary objective is to:
-
-> **Improve inventory availability and inventory efficiency while protecting profitability and reducing excess working capital.**
-
-The project will eventually support decisions related to:
-
-* Inventory replenishment
-* Stockout prevention
-* Excess inventory reduction
-* Store-to-store transfers
-* Product assortment
-* Supplier performance
-* Markdown opportunities
-* Working capital optimization
-* Demand and inventory planning
-
----
-
-# 🏗️ Project Architecture
-
-The project follows an end-to-end retail analytics workflow:
-
-```text
-Business Problem
-       ↓
-Project Setup
-       ↓
-Synthetic Retail Data Generation
-       ↓
-Data Profiling
-       ↓
-Data Cleaning
-       ↓
-Data Validation
-       ↓
-SQL Server
-       ↓
-Inventory KPI Analysis
-       ↓
-Stockout Analysis
-       ↓
-Overstock Analysis
-       ↓
-ABC Analysis
-       ↓
-Inventory Aging
-       ↓
-Replenishment Analysis
-       ↓
-Store & Product Diagnosis
-       ↓
-Root Cause Analysis
-       ↓
-Power BI Dashboard
-       ↓
-Business Recommendations
-```
-
----
-
-# 📊 Dataset
-
-The project uses a synthetic dataset representing a GCC retail business.
-
-### Current Dataset Scope
-
-| Entity                    |                   Volume |
-| ------------------------- | -----------------------: |
-| Stores                    |                       20 |
-| Products                  |                      500 |
-| Customers                 |                    5,000 |
-| Suppliers                 |                       30 |
-| Date Range                | 2023-01-01 to 2025-12-31 |
-| Target Sales Transactions |                  125,000 |
-
-The dataset is intentionally generated with realistic retail relationships rather than being a random collection of numbers.
-
----
-
-# 🗂️ Data Model
-
-The project uses a dimensional/star-schema-oriented structure.
-
-```text
-                    dim_date
-                       |
-                       |
-dim_customer ─── fact_sales ─── dim_product
-                       |
-                       |
-                   dim_store
-                       |
-                  dim_supplier
-
-
-                    dim_date
-                       |
-                       |
-dim_product ─── fact_inventory ─── dim_store
-                       |
-                  dim_supplier
-```
-
-### Main Tables
-
-#### Dimension Tables
-
-* `dim_date`
-* `dim_product`
-* `dim_store`
-* `dim_customer`
-* `dim_supplier`
-
-#### Fact Tables
-
-* `fact_sales`
-* `fact_inventory` *(in progress)*
-
----
-
-# 🧱 Current Project Structure
-
-```text
-retail-inventory-analytics/
-│
-├── data/
-│   ├── raw/
-│   ├── cleaned/
-│   └── processed/
-│
-├── notebooks/
-│   ├── 01_data_profiling.ipynb
-│   ├── 02_data_cleaning.ipynb
-│   ├── 03_inventory_kpis.ipynb
-│   ├── 04_stockout_analysis.ipynb
-│   ├── 05_overstock_analysis.ipynb
-│   ├── 06_abc_analysis.ipynb
-│   └── 07_replenishment_analysis.ipynb
-│
-├── src/
-│   ├── __init__.py
-│   ├── data_loader.py
-│   ├── data_cleaning.py
-│   ├── data_validation.py
-│   ├── inventory_kpis.py
-│   ├── utils.py
-│   ├── data_generation_config.py
-│   ├── validate_generation_config.py
-│   └── data_generation.py
-│
-├── sql/
-│   ├── 01_create_database.sql
-│   ├── 02_create_tables.sql
-│   ├── 03_load_data.sql
-│   ├── 04_data_validation.sql
-│   ├── 05_inventory_kpis.sql
-│   ├── 06_stockout_analysis.sql
-│   ├── 07_overstock_analysis.sql
-│   └── 08_replenishment_analysis.sql
-│
-├── powerbi/
-│   └── retail_inventory_analytics.pbix
-│
-├── docs/
-│   ├── business_problem.md
-│   ├── data_dictionary.md
-│   ├── kpi_definitions.md
-│   ├── inventory_methodology.md
-│   └── business_recommendations.md
-│
-├── outputs/
-│   ├── figures/
-│   └── reports/
-│
-├── .gitignore
-├── README.md
-└── requirements.txt
-```
-
----
-
-# 🐍 Python Data Generation
-
-A major part of the project is a configurable synthetic retail data-generation framework.
-
-The generator is controlled through:
-
-```text
-src/data_generation_config.py
-```
-
-and implemented through:
-
-```text
-src/data_generation.py
-```
-
-A fixed random seed is used to make the dataset reproducible:
-
-```python
-RANDOM_SEED = 42
-```
-
----
-
-# 📅 Date Dimension
-
-The project currently generates a date dimension covering:
-
-```text
-2023-01-01 → 2025-12-31
-```
-
-The date dimension includes fields such as:
-
-* Date
-* Year
-* Quarter
-* Month
-* Month Name
-* Week of Year
-* Day
-* Day Name
-* Day of Week
-* Weekend Flag
-* Season
-* Ramadan Flag
-* Eid Period Flag
-
-These fields will later support:
-
-* Seasonal inventory analysis
-* Monthly trends
-* Ramadan analysis
-* Eid analysis
-* Year-over-year analysis
-* Demand trend analysis
-
----
-
-# 🏭 Supplier Dimension
-
-The supplier dimension currently models:
-
-* Supplier ID
-* Supplier Name
-* Supplier Region
-* Lead Time
-* Minimum Order Quantity
-* Supplier Status
-
-Supplier regions include:
-
-* Local
-* Regional
-* International
-
-Different supplier regions are assigned different synthetic lead-time ranges.
-
-This will later support:
-
-* Replenishment analysis
-* Lead-time risk
-* Supplier performance
-* Safety-stock calculations
-* Reorder-point analysis
-
----
-
-# 📦 Product Dimension
-
-The product dimension currently contains:
-
-* Product ID
-* Product Name
-* Category
-* Subcategory
-* Brand
-* Supplier
-* Unit Cost
-* Selling Price
-* Product Status
-* Product Launch Date
-* Shelf Life
-* Demand Class
-* Demand Trajectory
-* Base Demand
-
-### Demand Classes
-
-Products are classified into:
-
-```text
-Fast-moving
-Medium-moving
-Slow-moving
-```
-
-with different demand behavior.
-
-### Demand Trajectories
-
-Products can have:
-
-```text
-Growing
-Stable
-Declining
-Volatile
-```
-
-These attributes will later support inventory prioritization and demand analysis.
-
----
-
-# 🏪 Store Dimension
-
-The store dimension currently models different retail formats:
-
-* Hypermarket
-* Supermarket
-* Express
-* E-commerce
-
-Stores are distributed across synthetic GCC/Saudi-oriented locations including:
-
-* Riyadh
-* Jeddah
-* Makkah
-* Madinah
-* Dammam
-* Khobar
-* Tabuk
-* Abha
-
-Each store receives a synthetic demand factor based on:
-
-* Store type
-* Region
-* Retail format
-
-This will later support:
-
-* Store-level inventory analysis
-* Stockout analysis
-* Store-to-store comparisons
-* Replenishment prioritization
-
----
-
-# 👥 Customer Dimension
-
-The customer dimension currently contains 5,000 synthetic customers.
-
-Customer attributes include:
-
-* Customer ID
-* Customer Segment
-* Gender
-* Age Group
-* City
-* Customer Start Date
-* Customer Tenure
-* Preferred Channel
-* Purchase Frequency Factor
-* Average Basket Factor
-* Price Sensitivity
-
-Customer segments include:
-
-```text
-Premium
-Regular
-Value
-New
-```
-
-These attributes will eventually support customer-driven demand analysis.
-
----
-
-# 💰 Sales Fact Table
-
-The `fact_sales` generation is currently completed and validated.
-
-### Current Volume
-
-```text
-125,000 transactions
-```
-
-Each transaction contains:
-
-* Transaction ID
-* Transaction Date
-* Product ID
-* Store ID
-* Customer ID
-* Quantity
-* Unit Price
-* Discount
-* Gross Sales
-* Net Sales
-* COGS
-* Gross Profit
-
-The generated sales model also contains analytical helper attributes such as:
-
-* Demand Class
-* Demand Trajectory
-* Demand Intensity
-* Season
-* Day-of-week factor
-* Seasonality factor
-* Promotion Flag
-* Demand Spike Flag
-
----
-
-# 📈 Sales Calculation Logic
-
-### Gross Sales
-
-```text
-Gross Sales = Quantity × Unit Price
-```
-
-### Discount Amount
-
-```text
-Discount Amount = Gross Sales × Discount %
-```
-
-### Net Sales
-
-```text
-Net Sales = Gross Sales − Discount Amount
-```
-
-### COGS
-
-```text
-COGS = Quantity × Unit Cost
-```
-
-### Gross Profit
-
-```text
-Gross Profit = Net Sales − COGS
-```
-
-These calculations have been programmatically validated.
-
----
-
-# 🧠 Demand Modeling
-
-The sales generator models demand using multiple business factors.
-
-Conceptually:
-
-```text
-Base Demand
-     ×
-Demand Class
-     ×
-Demand Trajectory
-     ×
-Store Demand
-     ×
-Customer Behavior
-     ×
-Day-of-Week
-     ×
-Seasonality
-     ×
-Promotion
-     ×
-Random Variation
-     ×
-Demand Spikes
-```
-
-This creates more realistic demand behavior than assigning completely random sales quantities.
-
----
-
-# 🏷️ Promotion Modeling
-
-Synthetic promotions are included in the sales model.
-
-Promotions have:
-
-* Promotion flag
-* Discount percentage
-* Demand lift
-
-The current model applies a synthetic demand lift to promotional transactions.
-
-Validation confirmed that promotional transactions have higher average quantities than non-promotional transactions.
-
-Current validation:
-
-```text
-Non-promotion average quantity ≈ 4.33
-Promotion average quantity     ≈ 4.97
-```
-
-This relationship will later help analyze:
-
-> **Whether promotional demand contributes to stockout risk.**
-
----
-
-# 🌦️ Seasonality Modeling
-
-The model includes category-specific seasonal behavior.
-
-Categories include:
-
-* Grocery
-* Beverages
-* Personal Care
-* Household
-* Electronics
-* Fashion
-* Home & Living
-* Beauty
-
-Seasonality is modeled across:
-
-* Winter
-* Spring
-* Summer
-* Autumn
-* Ramadan
-* Eid
-
-Current validation confirmed that:
-
-* Summer has the highest average quantity among the four standard seasons.
-* Ramadan demand is higher than normal-period demand.
-* Eid-period demand is higher than normal-period demand.
-
-Ramadan and Eid flags are also mutually exclusive.
-
----
-
-# 🧪 Data Validation
-
-The generated `fact_sales` data has undergone automated validation.
-
-### Structural Validation
-
-```text
-✓ 125,000 transactions
-✓ Transaction IDs are unique
-✓ Product IDs are valid
-✓ Store IDs are valid
-✓ Customer IDs are valid
-```
-
-### Financial Validation
-
-```text
-✓ Quantity > 0
-✓ Unit Price > 0
-✓ Gross Sales ≥ Net Sales
-✓ Discount Amount ≥ 0
-✓ Net Sales > 0
-✓ COGS > 0
-✓ Gross Sales calculation correct
-✓ Net Sales calculation correct
-✓ COGS calculation correct
-✓ Gross Profit calculation correct
-```
-
-### Business Behavior Validation
-
-```text
-✓ Fast-moving demand > Medium-moving demand > Slow-moving demand
-✓ Promotions generate higher average quantities
-✓ Seasonal demand behavior is present
-✓ Ramadan demand uplift is present
-✓ Eid demand uplift is present
-✓ Ramadan/Eid overlap = 0
-```
-
----
-
-# 📦 Inventory Analytics — Planned
-
-The next major phase is the generation and analysis of `fact_inventory`.
-
-The intended inventory grain is:
-
-> **One row = one product × one store × one day**
-
-The inventory model will track:
-
-```text
-Opening Stock
-+
-Receipts
-+
-Transfers In
-−
-Transfers Out
-−
-Sales
-+
-Returns
-−
-Damaged Units
-±
-Inventory Adjustments
-=
-Closing Stock
-```
-
-This will allow the project to analyze inventory movement rather than simply looking at static stock levels.
-
----
-
-# 📊 Planned Inventory KPIs
-
-The project will calculate and analyze:
-
-### Core KPIs
-
-* Inventory Turnover
-* Sell-through %
-* Stockout Rate
-* In-stock Rate
-* Average Inventory
-* Inventory Value
-* Days of Inventory
-* Inventory Coverage Days
-
-### Inventory Risk
-
-* Slow-moving Inventory
-* Dead Stock
-* Excess Inventory
-* Stockout Risk
-* Replenishment Risk
-* Aging Inventory
-
-### Profitability
-
-* Gross Profit
-* Gross Margin %
-* GMROI
-
-### Replenishment
-
-* Safety Stock
-* Reorder Point
-* Lead Time
-* Minimum Order Quantity
-* Replenishment Priority
-
----
-
-# 🔎 Planned Business Analysis
-
-The completed project will answer questions such as:
-
-### Inventory Availability
-
-* Which products experience the most stockouts?
-* Which stores have the highest stockout rates?
-* Which high-demand products are frequently unavailable?
-
-### Excess Inventory
-
-* Which products have excessive inventory?
-* Which stores are carrying slow-moving stock?
-* Which products have very high inventory coverage?
-
-### Product Analysis
-
-* Which products generate the most sales?
-* Which products generate the most profit?
-* Which products have high demand but poor availability?
-
-### Store Analysis
-
-* Which stores are overstocked?
-* Which stores experience frequent shortages?
-* Where should inventory be transferred?
-
-### Supplier Analysis
-
-* Which suppliers have long lead times?
-* Which suppliers create replenishment risk?
-* Which products are exposed to long lead-time dependency?
-
-### Replenishment
-
-* Which products should be reordered first?
-* What is the estimated reorder point?
-* Which products require higher safety stock?
-
----
-
-# 📊 Planned ABC Analysis
-
-Products will eventually be classified using ABC analysis based on business value.
-
-Example:
-
-```text
-A → Highest-value products
-B → Medium-value products
-C → Lower-value products
-```
-
-This will help prioritize inventory-management effort.
-
-The goal is not simply:
-
-> "Which products sell the most?"
-
-but:
-
-> **"Which products deserve the most inventory-management attention?"**
-
----
-
-# 🛠️ Technology Stack
-
-| Technology  | Purpose                              |
-| ----------- | ------------------------------------ |
-| Python      | Data generation, cleaning & analysis |
-| Pandas      | Data manipulation                    |
-| NumPy       | Numerical modeling                   |
-| Matplotlib  | Visualization                        |
-| Seaborn     | Exploratory visualization            |
-| SQL Server  | Data storage & SQL analytics         |
-| SSMS        | Database development                 |
-| Power BI    | Dashboard & reporting                |
-| DAX         | BI calculations                      |
-| Power Query | Data transformation                  |
-| Git         | Version control                      |
-| GitHub      | Portfolio & project collaboration    |
-| VS Code     | Development environment              |
-| Jupyter     | Exploratory analysis                 |
-
----
-
-# 🔄 Hybrid Analytics Architecture
-
-The project follows a hybrid approach rather than forcing every task into one tool.
-
-### Python
-
-Used for:
-
-* Synthetic data generation
-* Data profiling
-* Data cleaning
-* Complex transformations
-* Statistical analysis
-* Modeling
-
-### SQL Server
-
-Used for:
-
-* Structured storage
-* Data validation
-* Joins
-* KPI calculations
-* Business analysis
-* Reusable views
-* Analytical queries
-
-### Power BI
-
-Used for:
-
-* KPI dashboards
-* Inventory health monitoring
-* Store analysis
-* Product analysis
-* Stockout visualization
-* Management reporting
-
-This reflects a practical retail analytics workflow.
-
----
-
-# 🌱 Git Development
-
-The project is being developed incrementally using Git.
-
-Current development milestones include:
-
-```text
-Initialize retail inventory analytics project
-
-Implement date dimension generation
-
-Implement supplier dimension generation
-
-Implement product dimension generation
-
-Implement store dimension generation
-
-Implement customer dimension generation
-
-Implement fact sales generation
-```
-
-Each major development stage is validated before moving to the next stage.
-
----
-
-# 🚧 Project Status
-
-### Completed
-
-* [X] Project structure
-* [X] Git/GitHub setup
-* [X] Python environment
-* [X] Requirements setup
-* [X] Data-generation configuration
-* [X] Date dimension
-* [X] Supplier dimension
-* [X] Product dimension
-* [X] Store dimension
-* [X] Customer dimension
-* [X] Sales fact generation
-* [X] Sales financial validation
-* [X] Demand behavior validation
-* [X] Promotion validation
-* [X] Seasonality validation
-* [X] Ramadan/Eid validation
-
-### In Progress
-
-* [ ] Inventory fact generation
-* [ ] Inventory reconciliation
-* [ ] Inventory data validation
-* [ ] Inventory KPI calculations
-* [ ] Stockout analysis
-* [ ] Overstock analysis
-* [ ] ABC analysis
-* [ ] Inventory aging
-* [ ] Replenishment analysis
-* [ ] Store/product diagnosis
-* [ ] Root-cause analysis
-* [ ] SQL Server implementation
-* [ ] Power BI dashboard
-* [ ] Business recommendations
-* [ ] Final portfolio documentation
-
----
-
-# 💼 Business Value
-
-The final project is designed to demonstrate how a Retail Analyst can move from:
-
-```text
-Raw Data
-   ↓
-Data Quality
-   ↓
-Business Metrics
-   ↓
-Inventory Diagnosis
-   ↓
-Root Cause
-   ↓
-Business Action
-```
-
-The goal is not simply to calculate KPIs.
-
-The goal is to answer:
-
-> **What is happening?**
-
-> **Why is it happening?**
-
-> **Which products/stores are affected?**
-
-> **What should the retailer do?**
-
-> **What business impact could the decision create?**
-
----
-
-# ⚠️ Data Disclaimer
-
-This project uses **synthetic data** created specifically for portfolio and learning purposes.
-
-The locations, customers, products, suppliers, transactions, demand patterns, and financial values do not represent actual GulfMart Retail data or actual company performance.
-
-Business assumptions such as Ramadan/Eid periods, demand factors, supplier lead times, promotions, and seasonality are synthetic modeling assumptions.
-
----
-
-# 👨‍💻 Project Purpose
-
-This project is part of a Retail Analytics portfolio demonstrating practical skills in:
-
-* Retail business analysis
-* Customer and product analytics
-* Inventory analytics
-* Sales analytics
-* Data quality
-* Python/Pandas
-* SQL Server
-* Power BI
-* KPI development
-* Business problem solving
-* Git/GitHub
-* Data-driven decision making
+Retail business analysis · Sales analytics · Inventory analytics · Demand analysis · Data quality · Python/Pandas · NumPy · SQL Server · Power BI · KPI development · Business problem solving · Git/GitHub · Data-driven decision making
 
 ---
 
