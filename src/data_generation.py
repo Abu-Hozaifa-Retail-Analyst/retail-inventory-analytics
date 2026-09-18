@@ -19,8 +19,6 @@ Generation pipeline:
 # %%
 # Add the imports
 
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 
@@ -803,6 +801,153 @@ def generate_dim_customer():
 
 
 # %%
+def _run_sequential_inventory_simulation(
+    group,
+):
+    """
+    Simulate daily inventory for one product-store combination.
+
+    The simulation is sequential because today's inventory depends
+    on what happened yesterday.
+
+    Main logic:
+        Opening Stock
+        → Receive Purchase Orders
+        → Demand
+        → Fulfilled Sales
+        → Lost Sales
+        → Closing Stock
+        → Replenishment Decision
+    """
+
+    # ---------------------------------------------------------
+    # STEP 1 — Sort the group by date
+    # ---------------------------------------------------------
+    # Inventory must be simulated in chronological order.
+    # Example:
+    #
+    # 2023-01-01
+    # 2023-01-02
+    # 2023-01-03
+    #
+    # We cannot calculate today's closing stock before knowing
+    # yesterday's closing stock.
+    # ---------------------------------------------------------
+
+    group = group.sort_values("date").copy()
+
+    # ---------------------------------------------------------
+    # STEP 2 — Create the basic state variables
+    # ---------------------------------------------------------
+
+    # These variables represent the inventory state as we move
+    # through each day.
+
+    opening_stock = 0
+    on_order_inventory = 0
+
+    # ---------------------------------------------------------
+    # STEP 3 — Store simulation results
+    # ---------------------------------------------------------
+
+    results = []
+
+    # ---------------------------------------------------------
+    # STEP 4 — Process each day sequentially
+    # ---------------------------------------------------------
+
+    for _, row in group.iterrows():
+        # -----------------------------------------------------
+        # Today's demand
+        # -----------------------------------------------------
+
+        demand_units = row["sales_units"]
+
+        # -----------------------------------------------------
+        # Receive purchase orders due today
+        # -----------------------------------------------------
+
+        receipts_today = 0
+
+        # We will add the actual purchase-order pipeline
+        # in the next part of Step 10B.
+        #
+        # For now:
+        # receipts_today = 0
+
+        # -----------------------------------------------------
+        # Available inventory before today's demand
+        # -----------------------------------------------------
+
+        available_stock = opening_stock + receipts_today
+
+        # -----------------------------------------------------
+        # Fulfill today's demand
+        # -----------------------------------------------------
+
+        fulfilled_sales_units = min(demand_units, available_stock)
+
+        # -----------------------------------------------------
+        # Lost sales
+        # -----------------------------------------------------
+        # If customers want 10 units but only 6 are available:
+        #
+        # Demand = 10
+        # Fulfilled = 6
+        # Lost sales = 4
+        # -----------------------------------------------------
+
+        lost_sales_units = demand_units - fulfilled_sales_units
+
+        # -----------------------------------------------------
+        # Closing inventory
+        # -----------------------------------------------------
+
+        closing_stock = available_stock - fulfilled_sales_units
+
+        # -----------------------------------------------------
+        # Inventory position
+        # -----------------------------------------------------
+        # Inventory Position =
+        # Closing Stock + On-Order Inventory
+        # -----------------------------------------------------
+
+        inventory_position = closing_stock + on_order_inventory
+
+        # -----------------------------------------------------
+        # Save today's results
+        # -----------------------------------------------------
+
+        results.append(
+            {
+                "date": row["date"],
+                "store_id": row["store_id"],
+                "product_id": row["product_id"],
+                "opening_stock": opening_stock,
+                "demand_units": demand_units,
+                "receipts_units": receipts_today,
+                "fulfilled_sales_units": fulfilled_sales_units,
+                "lost_sales_units": lost_sales_units,
+                "closing_stock": closing_stock,
+                "on_order_inventory": on_order_inventory,
+                "inventory_position": inventory_position,
+            }
+        )
+
+        # -----------------------------------------------------
+        # Move today's closing stock into tomorrow
+        # -----------------------------------------------------
+
+        opening_stock = closing_stock
+
+    # ---------------------------------------------------------
+    # STEP 5 — Return the simulation result
+    # ---------------------------------------------------------
+
+    return pd.DataFrame(results)
+
+
+# %%
 def generate_fact_inventory(
     fact_sales,
     dim_product,
@@ -1107,40 +1252,93 @@ def generate_fact_inventory(
     )
 
     # ============================================================
-    # Step 10D: Calculate reorder point
+    # Step 10D: Calculate lead-time demand
     # ============================================================
     #
+    # Lead-time demand estimates how many units are expected
+    # to be sold while waiting for a replenishment order.
+    #
+    # Formula:
+    #
+    # Lead-Time Demand =
+    # Demand Rate × Supplier Lead Time
+    #
+    # ============================================================
+
+    daily_calendar["lead_time_demand"] = (
+        daily_calendar["demand_rate"] * daily_calendar["lead_time_days"]
+    )
+
+    daily_calendar["lead_time_demand"] = daily_calendar["lead_time_demand"].clip(
+        lower=0
+    )
+
+    print("\nLead-time demand summary:")
+    print(daily_calendar["lead_time_demand"].describe())
+
+    # ============================================================
+    # Step 10E: Calculate reorder point
+    # ============================================================
+    #
+    # Reorder Point (ROP) tells us when inventory should trigger
+    # a replenishment decision.
+    #
+    # Formula:
+    #
     # ROP =
-    # Demand during lead time + safety stock
+    # Lead-Time Demand + Safety Stock
     #
     # ============================================================
 
     daily_calendar["reorder_point"] = (
-        daily_calendar["demand_rate"] * daily_calendar["lead_time_days"]
-        + daily_calendar["safety_stock_units"]
+        daily_calendar["lead_time_demand"] + daily_calendar["safety_stock_units"]
     )
 
     daily_calendar["reorder_point"] = daily_calendar["reorder_point"].clip(lower=0)
 
     print("\nReorder point summary:")
-
     print(daily_calendar["reorder_point"].describe())
 
     # ============================================================
-    # Step 10E: Calculate target stock level
+    # Step 10F: Calculate review-period demand
+    # ============================================================
+    #
+    # Review-period demand estimates expected demand between
+    # inventory review opportunities.
+    #
+    # ============================================================
+
+    daily_calendar["review_period_demand"] = (
+        daily_calendar["demand_rate"] * daily_calendar["replenishment_interval_days"]
+    )
+
+    daily_calendar["review_period_demand"] = daily_calendar[
+        "review_period_demand"
+    ].clip(lower=0)
+
+    print("\nReview-period demand summary:")
+    print(daily_calendar["review_period_demand"].describe())
+
+    # ============================================================
+    # Step 10G: Calculate target stock level
+    # ============================================================
+    #
+    # Target Stock represents the desired inventory position
+    # after replenishment.
+    #
+    # Formula:
+    #
+    # Target Stock =
+    # Lead-Time Demand
+    # + Review-Period Demand
+    # + Safety Stock
+    #
     # ============================================================
 
     daily_calendar["target_stock_level"] = (
-        (
-            daily_calendar["demand_rate"]
-            * (
-                daily_calendar["lead_time_days"]
-                + daily_calendar["replenishment_interval_days"]
-                + daily_calendar["safety_stock_days"]
-            )
-        )
-        .round()
-        .astype(int)
+        daily_calendar["lead_time_demand"]
+        + daily_calendar["review_period_demand"]
+        + daily_calendar["safety_stock_units"]
     )
 
     daily_calendar["target_stock_level"] = daily_calendar["target_stock_level"].clip(
@@ -1148,7 +1346,6 @@ def generate_fact_inventory(
     )
 
     print("\nTarget stock level summary:")
-
     print(daily_calendar["target_stock_level"].describe())
 
     # ============================================================
@@ -1166,7 +1363,6 @@ def generate_fact_inventory(
     )
 
     print("\nReplenishment review events:")
-
     print(daily_calendar["is_replenishment_review"].sum())
 
     # ============================================================
@@ -1198,7 +1394,6 @@ def generate_fact_inventory(
     ].astype(int)
 
     print("\nPlanned order quantity summary:")
-
     print(
         daily_calendar.loc[
             daily_calendar["planned_order_quantity"] > 0,
@@ -1242,9 +1437,7 @@ def generate_fact_inventory(
     )
 
     print(f"\nReplenishment orders created: {len(replenishment_orders):,}")
-
     print("\nReplenishment order preview:")
-
     print(replenishment_orders.head())
 
     # ============================================================
@@ -1288,7 +1481,6 @@ def generate_fact_inventory(
     daily_calendar["receipts"] = daily_calendar["receipts"].fillna(0).astype(int)
 
     print("\nReceipt summary:")
-
     print(daily_calendar["receipts"].describe())
 
     # ============================================================
@@ -1296,13 +1488,9 @@ def generate_fact_inventory(
     # ============================================================
 
     daily_calendar["transfers_in"] = 0
-
     daily_calendar["transfers_out"] = 0
-
     daily_calendar["returns_units"] = 0
-
     daily_calendar["damaged_units"] = 0
-
     daily_calendar["inventory_adjustments"] = 0
 
     # ============================================================
@@ -1402,7 +1590,6 @@ def generate_fact_inventory(
     ).sum()
 
     print("\nInventory reconciliation validation:")
-
     print(f"Reconciliation failures: {reconciliation_failures:,}")
 
     # ============================================================
@@ -1414,9 +1601,7 @@ def generate_fact_inventory(
     negative_inventory_rate = negative_inventory_rows / len(daily_calendar)
 
     print("\nNegative inventory validation:")
-
     print(f"Negative inventory rows: {negative_inventory_rows:,}")
-
     print(f"Negative inventory rate: {negative_inventory_rate:.2%}")
 
     # ============================================================
@@ -1484,11 +1669,9 @@ def generate_fact_inventory(
     # ============================================================
 
     print("\nInventory status distribution:")
-
     print(daily_calendar["inventory_status"].value_counts())
 
     print("\nInventory event summary:")
-
     print(
         {
             "Replenishment Orders": int(
@@ -1502,7 +1685,6 @@ def generate_fact_inventory(
     )
 
     print("\nInventory coverage summary:")
-
     print(daily_calendar["inventory_coverage_days"].describe())
 
     return daily_calendar
@@ -1884,7 +2066,70 @@ def inject_data_quality_issues(
     fact_inventory,
 ):
     """Inject a small number of controlled data-quality issues."""
-    pass
+
+    print("\nInjecting controlled data-quality issues...")
+
+    # Work on copies so we never mutate the "clean" dataframes
+    # that were already generated upstream.
+    dim_product = dim_product.copy()
+    dim_store = dim_store.copy()
+    dim_customer = dim_customer.copy()
+    dim_supplier = dim_supplier.copy()
+    fact_sales = fact_sales.copy()
+    fact_inventory = fact_inventory.copy()
+
+    # ------------------------------------------------------
+    # Issue 1: Missing brand values (dim_product)
+    # ------------------------------------------------------
+    issue_mask = rng.random(len(dim_product)) < DATA_QUALITY_ISSUE_PROBABILITY
+    dim_product.loc[issue_mask, "brand"] = np.nan
+    print(f"dim_product: {issue_mask.sum()} missing 'brand' values injected")
+
+    # ------------------------------------------------------
+    # Issue 2: Missing city values (dim_customer)
+    # ------------------------------------------------------
+    issue_mask = rng.random(len(dim_customer)) < DATA_QUALITY_ISSUE_PROBABILITY
+    dim_customer.loc[issue_mask, "city"] = np.nan
+    print(f"dim_customer: {issue_mask.sum()} missing 'city' values injected")
+
+    # ------------------------------------------------------
+    # Issue 3: Inconsistent text formatting (dim_store.city)
+    # e.g. "Riyadh" -> "RIYADH  " (wrong case + trailing spaces)
+    # Slightly higher rate so it's actually visible in a
+    # 20-row table.
+    # ------------------------------------------------------
+    issue_mask = rng.random(len(dim_store)) < (DATA_QUALITY_ISSUE_PROBABILITY * 20)
+    dim_store.loc[issue_mask, "city"] = (
+        dim_store.loc[issue_mask, "city"].str.upper() + "  "
+    )
+    print(f"dim_store: {issue_mask.sum()} inconsistent 'city' text values injected")
+
+    # ------------------------------------------------------
+    # Issue 4: Missing supplier_name (dim_supplier)
+    # ------------------------------------------------------
+    issue_mask = rng.random(len(dim_supplier)) < DATA_QUALITY_ISSUE_PROBABILITY
+    dim_supplier.loc[issue_mask, "supplier_name"] = np.nan
+    print(f"dim_supplier: {issue_mask.sum()} missing 'supplier_name' values injected")
+
+    # ------------------------------------------------------
+    # Issue 5: Duplicate transactions (fact_sales)
+    # Simulates a POS system sending the same sale twice.
+    # ------------------------------------------------------
+    n_duplicates = max(1, int(len(fact_sales) * DATA_QUALITY_ISSUE_PROBABILITY))
+    duplicate_rows = fact_sales.sample(n=n_duplicates, random_state=RANDOM_SEED)
+    fact_sales = pd.concat([fact_sales, duplicate_rows], ignore_index=True)
+    print(f"fact_sales: {n_duplicates} duplicate transactions injected")
+
+    print("Data-quality injection completed.")
+
+    return (
+        dim_product,
+        dim_store,
+        dim_customer,
+        dim_supplier,
+        fact_sales,
+        fact_inventory,
+    )
 
 
 # %%
@@ -1928,24 +2173,30 @@ def save_datasets(
 # %%
 def generate_all_data():
     """Run the complete synthetic dataset generation pipeline."""
-    pass
 
+    print("=" * 60)
+    print("GulfMart Retail Inventory Analytics — Data Generation")
+    print("=" * 60)
 
-# %%
-if __name__ == "__main__":
+    # --------------------------------------------------------
+    # Step 1: Dimensions
+    # --------------------------------------------------------
     dim_date = generate_dim_date()
+    dim_supplier = generate_dim_supplier()
     dim_product = generate_dim_product()
     dim_store = generate_dim_store()
     dim_customer = generate_dim_customer()
-    dim_supplier = generate_dim_supplier()
 
+    # --------------------------------------------------------
+    # Step 2: Facts
+    # --------------------------------------------------------
     fact_sales = generate_fact_sales(
         dim_date,
         dim_product,
         dim_store,
         dim_customer,
     )
-    # %%
+
     fact_inventory = generate_fact_inventory(
         fact_sales,
         dim_product,
@@ -1953,4 +2204,67 @@ if __name__ == "__main__":
         dim_supplier,
         dim_date,
     )
+
+    # --------------------------------------------------------
+    # Step 3: Data quality injection (controlled, optional)
+    # --------------------------------------------------------
+    if INJECT_DATA_QUALITY_ISSUES:
+        (
+            dim_product,
+            dim_store,
+            dim_customer,
+            dim_supplier,
+            fact_sales,
+            fact_inventory,
+        ) = inject_data_quality_issues(
+            dim_product,
+            dim_store,
+            dim_customer,
+            dim_supplier,
+            fact_sales,
+            fact_inventory,
+        )
+
+    # --------------------------------------------------------
+    # Step 4: Validation
+    # --------------------------------------------------------
+    validate_generated_dataset(
+        dim_date,
+        dim_product,
+        dim_store,
+        dim_customer,
+        dim_supplier,
+        fact_sales,
+        fact_inventory,
+    )
+
+    # --------------------------------------------------------
+    # Step 5: Save
+    # --------------------------------------------------------
+    save_datasets(
+        dim_date,
+        dim_product,
+        dim_store,
+        dim_customer,
+        dim_supplier,
+        fact_sales,
+        fact_inventory,
+    )
+
+    print("\nData generation pipeline completed successfully.")
+
+    return {
+        "dim_date": dim_date,
+        "dim_product": dim_product,
+        "dim_store": dim_store,
+        "dim_customer": dim_customer,
+        "dim_supplier": dim_supplier,
+        "fact_sales": fact_sales,
+        "fact_inventory": fact_inventory,
+    }
+
+
+# %%
+if __name__ == "__main__":
+    generated_data = generate_all_data()
 # %%
