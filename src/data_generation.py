@@ -2420,7 +2420,53 @@ def save_datasets(
     fact_inventory,
 ):
     """Save generated datasets as CSV files."""
-    pass
+
+    print("\n" + "=" * 60)
+    print("Saving datasets...")
+    print("=" * 60)
+
+    RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------
+    # Small/medium tables: plain CSV
+    # ------------------------------------------------------
+    plain_csv_tables = {
+        "dim_date": dim_date,
+        "dim_product": dim_product,
+        "dim_store": dim_store,
+        "dim_customer": dim_customer,
+        "dim_supplier": dim_supplier,
+        "fact_sales": fact_sales,
+    }
+
+    for name, df in plain_csv_tables.items():
+        file_path = RAW_DATA_DIR / f"{name}.csv"
+        df.to_csv(file_path, index=False)
+
+        size_mb = file_path.stat().st_size / (1024 * 1024)
+        print(
+            f"Saved {name:15s} {len(df):>10,} rows  →  {file_path.name}  ({size_mb:.2f} MB)"
+        )
+
+    # ------------------------------------------------------
+    # fact_inventory: large table, gzip-compressed CSV
+    # ------------------------------------------------------
+    inventory_path = RAW_DATA_DIR / "fact_inventory.csv.gz"
+
+    fact_inventory.to_csv(
+        inventory_path,
+        index=False,
+        compression="gzip",
+    )
+
+    size_mb = inventory_path.stat().st_size / (1024 * 1024)
+    print(
+        f"Saved {'fact_inventory':15s} {len(fact_inventory):>10,} rows  →  "
+        f"{inventory_path.name}  ({size_mb:.2f} MB, gzip-compressed)"
+    )
+
+    print("\nAll datasets saved successfully.")
+    print(f"Output directory: {RAW_DATA_DIR}")
 
 
 # ============================================================

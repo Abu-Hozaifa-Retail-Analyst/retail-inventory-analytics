@@ -759,15 +759,19 @@ Implement validate_generated_dataset() and save_datasets()
 * [x] Stockout / low-stock / inventory status flags
 * [x] Full pipeline orchestration (`generate_all_data`)
 * [x] Controlled data-quality issue injection
-...
-- [x] validate_generated_dataset() — automated structural/financial/business/data-quality checks
+
+* [x] validate_generated_dataset() — automated structural/financial/business/data-quality checks
+
+
+* [x] save_datasets() — persist all generated tables to data/raw/ (CSV, fact_inventory gzip-compressed)
 
 ## In Progress
 
 * [ ] `validate_generated_dataset()` — automated structural/financial/business validation across all tables
 * [ ] `save_datasets()` — persist all generated tables to `data/raw/` as CSV
 * [ ] Remove/refactor dead `_run_sequential_inventory_simulation` (superseded by vectorized cumulative approach)
-- [ ] save_datasets() — persist all generated tables to data/raw/ as CSV
+* [ ] save_datasets() — persist all generated tables to data/raw/ as CSV
+* [ ] Remove/refactor dead `_run_sequential_inventory_simulation`
 
 ## Planned
 
@@ -805,9 +809,11 @@ Validate Inventory Health ✓
      ↓
 Inject Controlled Data-Quality Issues ✓
      ↓
-Validate Generated Dataset (structural / business rules)  ← current
+Validate Generated Dataset (structural / business rules)  
      ↓
 Implement save_datasets()
+     ↓
+Full data generation pipeline complete — moving to notebooks (data profiling)
      ↓
 Save Datasets to CSV
      ↓
