@@ -556,6 +556,8 @@ The generated sales model also contains analytical helper attributes such as:
 
 ---
 
+
+
 # 📈 Sales Calculation Logic
 
 ### Gross Sales
@@ -1131,6 +1133,10 @@ Implement actual demand calibration for inventory generation
 Each major development stage is validated before moving to the next stage.
 
 ---
+
+```
+Wire complete data generation pipeline (generate_all_data)
+```
 
 # 🚧 Project Status
 
