@@ -59,6 +59,36 @@ def format_kpi_value(value):
     return f"{value:.6f}"
 
 
+def format_table_for_display(
+    df, small_ratio_columns=("inventory_turnover_annualized", "gmroi")
+):
+    """
+    Return a display-only COPY of a KPI table with column-appropriate
+    formatting: small-magnitude ratio columns (turnover, GMROI) get
+    5 decimal places so they don't silently round to "0.00" the way
+    a single global 2-decimal format does; other float columns keep
+    thousands separators at 2 decimals. Does not modify df or affect
+    any further calculation -- formatting only.
+    """
+
+    display_df = df.copy()
+
+    for column in display_df.columns:
+        if not pd.api.types.is_float_dtype(display_df[column]):
+            continue
+
+        if column in small_ratio_columns:
+            display_df[column] = display_df[column].map(
+                lambda v: f"{v:.5f}" if pd.notna(v) else "NaN"
+            )
+        else:
+            display_df[column] = display_df[column].map(
+                lambda v: f"{v:,.2f}" if pd.notna(v) else "NaN"
+            )
+
+    return display_df
+
+
 # ============================================================
 # 1. STATIC ATTRIBUTE EXTRACTION
 # ============================================================
