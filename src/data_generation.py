@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 
 from data_validation import validate_generated_dataset
+from utils import downcast_dtypes
 from data_generation_config import (
     RANDOM_SEED,
     START_DATE,
@@ -2175,9 +2176,13 @@ def save_datasets(
             f"Saved {name:15s} {len(df):>10,} rows  →  {file_path.name}  ({size_mb:.2f} MB)"
         )
 
+        # ------------------------------------------------------
+    # fact_inventory: downcast dtypes to reduce peak memory
+    # during serialization, then save as gzip-compressed CSV
     # ------------------------------------------------------
-    # fact_inventory: large table, gzip-compressed CSV
-    # ------------------------------------------------------
+    print("\nDowncasting fact_inventory dtypes before saving...")
+    fact_inventory = downcast_dtypes(fact_inventory)
+
     inventory_path = RAW_DATA_DIR / "fact_inventory.csv.gz"
 
     fact_inventory.to_csv(
