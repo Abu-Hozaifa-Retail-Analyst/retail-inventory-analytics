@@ -881,10 +881,13 @@ Each major development stage is validated before moving to the next stage. Code 
 * [x] `save_datasets()` — persist all generated tables to `data/raw/` (CSV, `fact_inventory` gzip-compressed)
 * [x] Fixed validate_inventory_policy() indentation bug + float32 tolerance (np.isclose)
 * [x] Fixed validate_fact_sales() to correctly aggregate its own check results
+* [x] 01_data_profiling.ipynb — full profiling of all 7 tables, validation checkpoint
+* [x] 02_data_cleaning.ipynb — resolves all planted data-quality issues, re-validates clean (15 PASS / 0 FAIL / 2 REVIEW)
+
 
 ## In Progress
 
-* [ ] 02_data_cleaning.ipynb — resolve planted data-quality issues (dim_customer city, dim_supplier name, fact_sales duplicates)
+* [ ] 03_inventory_kpis.ipynb
 ## Planned
 
 * [ ] Data cleaning (`02_data_cleaning.ipynb`) — resolve the injected data-quality issues
