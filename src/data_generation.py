@@ -22,6 +22,7 @@ Generation pipeline:
 import numpy as np
 import pandas as pd
 
+from data_validation import validate_generated_dataset
 from data_generation_config import (
     RANDOM_SEED,
     START_DATE,
@@ -2133,280 +2134,6 @@ def inject_data_quality_issues(
 
 
 # %%
-def validate_generated_dataset(
-    dim_date,
-    dim_product,
-    dim_store,
-    dim_customer,
-    dim_supplier,
-    fact_sales,
-    fact_inventory,
-):
-    """Validate generated tables and relationships."""
-
-    print("\n" + "=" * 60)
-    print("Validating generated dataset...")
-    print("=" * 60)
-
-    results = []
-
-    def check(label, passed, detail=""):
-        results.append((label, passed, detail))
-        symbol = "✓" if passed else "✗"
-        suffix = f" — {detail}" if detail else ""
-        print(f"{symbol} {label}{suffix}")
-
-    # ============================================================
-    # STRUCTURAL VALIDATION
-    # ============================================================
-    print("\n--- Structural Validation ---")
-
-    check(
-        "dim_date row count",
-        len(dim_date) == 1096,
-        f"{len(dim_date):,} rows",
-    )
-
-    check(
-        "dim_product row count",
-        len(dim_product) == NUMBER_OF_PRODUCTS,
-        f"{len(dim_product):,} rows",
-    )
-
-    check(
-        "dim_store row count",
-        len(dim_store) == NUMBER_OF_STORES,
-        f"{len(dim_store):,} rows",
-    )
-
-    check(
-        "dim_customer row count",
-        len(dim_customer) == NUMBER_OF_CUSTOMERS,
-        f"{len(dim_customer):,} rows",
-    )
-
-    check(
-        "dim_supplier row count",
-        len(dim_supplier) == NUMBER_OF_SUPPLIERS,
-        f"{len(dim_supplier):,} rows",
-    )
-
-    check(
-        "fact_sales transaction IDs are unique",
-        fact_sales["transaction_id"].is_unique
-        or fact_sales["transaction_id"].duplicated().sum() > 0,
-        # Note: duplicates are EXPECTED here if data-quality
-        # injection ran, so we report the count instead of
-        # asserting pass/fail.
-        f"{fact_sales['transaction_id'].duplicated().sum():,} duplicate transaction_ids found",
-    )
-
-    check(
-        "fact_sales product_id referential integrity",
-        fact_sales["product_id"].isin(dim_product["product_id"]).all(),
-    )
-
-    check(
-        "fact_sales store_id referential integrity",
-        fact_sales["store_id"].isin(dim_store["store_id"]).all(),
-    )
-
-    check(
-        "fact_sales customer_id referential integrity",
-        fact_sales["customer_id"].isin(dim_customer["customer_id"]).all(),
-    )
-
-    # ============================================================
-    # FINANCIAL VALIDATION (fact_sales)
-    # ============================================================
-    print("\n--- Financial Validation ---")
-
-    check(
-        "Quantity > 0",
-        (fact_sales["quantity"] > 0).all(),
-    )
-
-    check(
-        "Unit price > 0",
-        (fact_sales["unit_price"] > 0).all(),
-    )
-
-    check(
-        "Gross sales >= net sales",
-        (fact_sales["gross_sales"] >= fact_sales["net_sales"]).all(),
-    )
-
-    check(
-        "Net sales > 0",
-        (fact_sales["net_sales"] > 0).all(),
-    )
-
-    check(
-        "COGS > 0",
-        (fact_sales["cogs"] > 0).all(),
-    )
-
-    calculated_gross = (fact_sales["quantity"] * fact_sales["unit_price"]).round(2)
-    check(
-        "Gross sales calculation correct",
-        (fact_sales["gross_sales"] == calculated_gross).all(),
-    )
-
-    calculated_net = (fact_sales["gross_sales"] - fact_sales["discount_amount"]).round(
-        2
-    )
-    check(
-        "Net sales calculation correct",
-        (fact_sales["net_sales"] == calculated_net).all(),
-    )
-
-    calculated_cogs = (fact_sales["quantity"] * fact_sales["unit_cost"]).round(2)
-    check(
-        "COGS calculation correct",
-        (fact_sales["cogs"] == calculated_cogs).all(),
-    )
-
-    calculated_profit = (fact_sales["net_sales"] - fact_sales["cogs"]).round(2)
-    check(
-        "Gross profit calculation correct",
-        (fact_sales["gross_profit"] == calculated_profit).all(),
-    )
-
-    # ============================================================
-    # BUSINESS BEHAVIOR VALIDATION (fact_sales)
-    # ============================================================
-    print("\n--- Business Behavior Validation ---")
-
-    avg_qty_by_class = fact_sales.groupby("demand_class")["quantity"].mean()
-    check(
-        "Fast-moving demand > Medium-moving > Slow-moving",
-        avg_qty_by_class.get("Fast-moving", 0)
-        > avg_qty_by_class.get("Medium-moving", 0)
-        > avg_qty_by_class.get("Slow-moving", 0),
-        str(avg_qty_by_class.round(2).to_dict()),
-    )
-
-    promo_avg = fact_sales.loc[fact_sales["is_promotion"], "quantity"].mean()
-    non_promo_avg = fact_sales.loc[~fact_sales["is_promotion"], "quantity"].mean()
-    check(
-        "Promotions generate higher average quantities",
-        promo_avg > non_promo_avg,
-        f"promo={promo_avg:.2f}, non-promo={non_promo_avg:.2f}",
-    )
-
-    check(
-        "Ramadan / Eid periods are mutually exclusive",
-        (fact_sales["is_ramadan"] & fact_sales["is_eid_period"]).sum() == 0,
-    )
-
-    # ============================================================
-    # INVENTORY VALIDATION (fact_inventory)
-    # ============================================================
-    print("\n--- Inventory Validation ---")
-
-    check(
-        "fact_inventory row count matches expected grain",
-        len(fact_inventory) == NUMBER_OF_STORES * NUMBER_OF_PRODUCTS * len(dim_date),
-        f"{len(fact_inventory):,} rows",
-    )
-
-    check(
-        "No negative closing stock",
-        (fact_inventory["closing_stock"] >= 0).all(),
-        f"{(fact_inventory['closing_stock'] < 0).sum():,} negative rows",
-    )
-
-    check(
-        "No negative opening stock",
-        (fact_inventory["opening_stock"] >= 0).all(),
-    )
-
-    previous_closing = fact_inventory.groupby(["store_id", "product_id"])[
-        "closing_stock"
-    ].shift(1)
-    has_previous_day = previous_closing.notna()
-    continuity_ok = (
-        fact_inventory.loc[has_previous_day, "opening_stock"]
-        == previous_closing[has_previous_day]
-    ).all()
-    check(
-        "Inventory continuity (opening = previous closing)",
-        continuity_ok,
-    )
-
-    # ============================================================
-    # DATA QUALITY VALIDATION
-    # (checks for the issues injected in inject_data_quality_issues)
-    # ============================================================
-    print("\n--- Data Quality Validation ---")
-
-    missing_brand = dim_product["brand"].isna().sum()
-    check(
-        "dim_product missing brand values",
-        True,  # informational, not pass/fail
-        f"{missing_brand:,} missing",
-    )
-
-    missing_city_customer = dim_customer["city"].isna().sum()
-    check(
-        "dim_customer missing city values",
-        True,
-        f"{missing_city_customer:,} missing",
-    )
-
-    inconsistent_store_city = (
-        dim_store["city"] != dim_store["city"].str.strip().str.title()
-    ).sum()
-    check(
-        "dim_store inconsistent city formatting",
-        True,
-        f"{inconsistent_store_city:,} rows affected",
-    )
-
-    missing_supplier_name = dim_supplier["supplier_name"].isna().sum()
-    check(
-        "dim_supplier missing supplier_name values",
-        True,
-        f"{missing_supplier_name:,} missing",
-    )
-
-    duplicate_transactions = fact_sales["transaction_id"].duplicated().sum()
-    check(
-        "fact_sales duplicate transaction_ids",
-        True,
-        f"{duplicate_transactions:,} duplicates",
-    )
-
-    # ============================================================
-    # SUMMARY
-    # ============================================================
-    failed = [r for r in results if not r[1]]
-
-    print("\n" + "=" * 60)
-    print(
-        f"Validation summary: {len(results) - len(failed)}/{len(results)} checks passed"
-    )
-
-    if failed:
-        print("\nFAILED CHECKS:")
-        for label, _, detail in failed:
-            print(f"  ✗ {label}" + (f" — {detail}" if detail else ""))
-    else:
-        print("All hard validation checks passed.")
-
-    print("=" * 60)
-
-    return {
-        "total_checks": len(results),
-        "passed": len(results) - len(failed),
-        "failed": len(failed),
-        "results": results,
-    }
-
-
-# ============================================================
-# Output
-# ============================================================
 
 
 # %%
@@ -2529,17 +2256,16 @@ def generate_all_data():
             fact_inventory,
         )
 
-    # --------------------------------------------------------
+        # --------------------------------------------------------
     # Step 4: Validation
     # --------------------------------------------------------
     validate_generated_dataset(
-        dim_date,
+        fact_sales,
+        fact_inventory,
         dim_product,
         dim_store,
         dim_customer,
         dim_supplier,
-        fact_sales,
-        fact_inventory,
     )
 
     # --------------------------------------------------------
