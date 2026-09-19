@@ -640,6 +640,24 @@ Note: exact counts vary slightly run to run because they're probability-driven a
 
 `validate_generated_dataset()` runs a full suite of automated checks across every generated table after generation and data-quality injection, replacing what was previously manual/visual inspection of print statements.
 
+### A note on "DATA VALIDATION FAILED"
+
+When `INJECT_DATA_QUALITY_ISSUES = True` (the default), the validation
+summary will show `fact_sales: FAIL` and an overall
+`DATA VALIDATION FAILED` message — this is expected, not a bug. The
+planted duplicate transactions (see "Controlled Data-Quality Injection"
+above) are a real, deliberate integrity issue at this stage of the
+pipeline, and `validate_generated_dataset()` reports them honestly
+rather than distinguishing "expected" issues from genuine bugs in code.
+That distinction is intentionally left to the reader, not automated —
+automating it risks quietly hiding a real future failure behind an
+"expected" label. The FAIL should disappear once `02_data_cleaning.ipynb`
+removes the duplicates and the dataset is re-validated.
+
+Latest run: **14 PASS / 1 FAIL (fact_sales — expected) / 2 REVIEW
+(inventory_reconciliation, lost_sales — architectural, not applicable
+to the current model).**
+
 ### Structural Validation
 
 ```text
@@ -861,12 +879,12 @@ Each major development stage is validated before moving to the next stage. Code 
 * [x] Controlled data-quality issue injection
 * [x] `validate_generated_dataset()` — automated structural/financial/business/data-quality checks (30/30 passing)
 * [x] `save_datasets()` — persist all generated tables to `data/raw/` (CSV, `fact_inventory` gzip-compressed)
+* [x] Fixed validate_inventory_policy() indentation bug + float32 tolerance (np.isclose)
+* [x] Fixed validate_fact_sales() to correctly aggregate its own check results
 
 ## In Progress
 
-* [ ] Remove/refactor dead `_run_sequential_inventory_simulation` (superseded by vectorized cumulative approach)
-* [ ] `notebooks/01_data_profiling.ipynb` — profile the saved raw dataset
-
+* [ ] 02_data_cleaning.ipynb — resolve planted data-quality issues (dim_customer city, dim_supplier name, fact_sales duplicates)
 ## Planned
 
 * [ ] Data cleaning (`02_data_cleaning.ipynb`) — resolve the injected data-quality issues

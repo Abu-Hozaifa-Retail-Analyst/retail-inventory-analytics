@@ -1179,6 +1179,8 @@ def generate_fact_inventory(
     daily_calendar["active_day_demand_rate"] = daily_calendar[
         "active_day_demand_rate"
     ].fillna(0)
+    daily_calendar["total_sales_units"] = daily_calendar["total_sales_units"].fillna(0)
+    daily_calendar["sales_days"] = daily_calendar["sales_days"].fillna(0).astype(int)
 
     # ============================================================
     # Step 9C: Create calibrated demand rate
@@ -2261,9 +2263,19 @@ def generate_all_data():
             fact_inventory,
         )
 
-        # --------------------------------------------------------
+    # --------------------------------------------------------
     # Step 4: Validation
     # --------------------------------------------------------
+    #
+    # A FAIL on `fact_sales` here is EXPECTED whenever
+    # INJECT_DATA_QUALITY_ISSUES is True (see config): the
+    # duplicate transactions planted by inject_data_quality_issues()
+    # are intentional, giving 02_data_cleaning.ipynb something real
+    # to detect and fix. This validation step is intentionally
+    # strict and does not distinguish "expected" issues from real
+    # bugs — that judgment is left to whoever reads this report,
+    # documented here and in the README rather than suppressed in
+    # code, so the validation logic itself stays simple and honest.
     validate_generated_dataset(
         fact_sales,
         fact_inventory,
