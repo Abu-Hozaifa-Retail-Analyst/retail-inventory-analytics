@@ -164,8 +164,8 @@ dim_product ─── fact_inventory ─── dim_store
 
 #### Fact Tables
 
-* `fact_sales` — generated and validated
-* `fact_inventory` — generated and validated (persistence to disk in progress)
+* `fact_sales` — generated, validated, and saved to `data/raw/fact_sales.csv`
+* `fact_inventory` — generated, validated, and saved to `data/raw/fact_inventory.csv.gz` (gzip-compressed, ~10.96M rows)
 
 ---
 
@@ -278,13 +278,19 @@ Data Validation
 Save Datasets
 ```
 
-The full pipeline is now orchestrated through a single entry point:
+The full pipeline is now orchestrated end to end through a single entry point:
 
 ```python
 generate_all_data()
 ```
 
-which calls every generation stage in sequence and returns all generated tables as a dictionary.
+which calls every generation stage in sequence, validates the result, persists it to `data/raw/`, and returns all generated tables as a dictionary. Running:
+
+```bash
+python src/data_generation.py
+```
+
+now produces a complete, validated, saved dataset with **no manual steps required**.
 
 ---
 
@@ -421,7 +427,7 @@ Segments: Premium, Regular, Value, New.
 
 # 💰 Sales Fact Table
 
-`fact_sales` is completed and validated: **125,000 transactions**.
+`fact_sales` is completed, validated, and persisted: **125,000 transactions**.
 
 ### Sales Calculation Logic
 
@@ -451,7 +457,7 @@ Base Demand
 ### Promotion Validation
 
 ```text
-Non-promotion average quantity ≈ 4.33
+Non-promotion average quantity ≈ 4.35
 Promotion average quantity     ≈ 4.97
 ```
 
@@ -468,8 +474,8 @@ Promotion average quantity     ≈ 4.97
 
 ```text
 Structural
-✓ 125,000 transactions, unique transaction IDs
-✓ Product / Store / Customer IDs valid
+✓ 125,000 transactions
+✓ Product / Store / Customer IDs valid (100% referential integrity)
 
 Financial
 ✓ Quantity > 0, Unit Price > 0
@@ -477,16 +483,17 @@ Financial
 ✓ All derived calculations verified correct
 
 Business Behavior
-✓ Fast-moving > Medium-moving > Slow-moving demand
+✓ Fast-moving (5.29) > Medium-moving (1.67) > Slow-moving (1.51) avg quantity
 ✓ Promotions generate higher average quantities
 ✓ Seasonal / Ramadan / Eid demand uplift present
+✓ Ramadan/Eid periods mutually exclusive
 ```
 
 ---
 
-# 📦 Inventory Analytics — Fact Table Generated & Validated
+# 📦 Inventory Analytics — Fact Table Generated, Validated & Saved
 
-`fact_inventory` generation is now **complete and validated** end-to-end.
+`fact_inventory` generation is now **complete, validated, and persisted** end-to-end.
 
 Grain: **one row = one product × one store × one day**
 
@@ -576,6 +583,7 @@ Opening Stock (day n) = Closing Stock (day n−1)
 ✓ Inventory continuity check   — 10,950,000 rows checked, 0 failures
 ✓ Inventory reconciliation      — 0 failures
 ✓ Negative inventory check      — 0 negative rows (0.00%)
+✓ fact_inventory row count matches expected grain — 10,960,000 rows
 ```
 
 ### Inventory Status Distribution
@@ -613,6 +621,94 @@ Implemented via `inject_data_quality_issues()`:
 ```
 
 Controlled by `DATA_QUALITY_ISSUE_PROBABILITY` in `data_generation_config.py` (default 0.1%, scaled up for very small tables like `dim_store` so issues remain visible).
+
+### Latest Injection Run
+
+```text
+dim_product      : 0 missing brand values
+dim_customer     : 4 missing city values
+dim_store        : 0 inconsistent city text values
+dim_supplier     : 1 missing supplier_name value
+fact_sales       : 125 duplicate transactions
+```
+
+Note: exact counts vary slightly run to run because they're probability-driven against small tables (e.g. 500 products × 0.1% ≈ 0.5 expected) — this is expected variance, not a bug. `fact_sales` (125,000 rows) reliably produces visible duplicates every run.
+
+---
+
+# 🧪 Automated Dataset Validation
+
+`validate_generated_dataset()` runs a full suite of automated checks across every generated table after generation and data-quality injection, replacing what was previously manual/visual inspection of print statements.
+
+### Structural Validation
+
+```text
+✓ Row counts match configuration for every dimension table
+✓ fact_sales referential integrity (product_id, store_id, customer_id all resolve)
+✓ fact_inventory row count matches expected grain (stores × products × days)
+```
+
+### Financial Validation
+
+```text
+✓ Quantity > 0, Unit Price > 0
+✓ Gross Sales ≥ Net Sales, Net Sales > 0, COGS > 0
+✓ Gross Sales / Net Sales / COGS / Gross Profit calculations all verified correct
+```
+
+### Business Behavior Validation
+
+```text
+✓ Fast-moving > Medium-moving > Slow-moving average quantity
+✓ Promotions generate higher average quantities than non-promotions
+✓ Ramadan / Eid periods are mutually exclusive
+```
+
+### Inventory Validation
+
+```text
+✓ No negative closing or opening stock
+✓ Inventory continuity holds (opening stock = previous day's closing stock)
+```
+
+### Data-Quality Validation (informational — reports counts, does not fail the run)
+
+```text
+✓ Missing brand / city / supplier_name counts reported
+✓ Inconsistent city formatting count reported
+✓ Duplicate transaction count reported
+```
+
+### Latest Validation Run
+
+```text
+Validation summary: 30/30 checks passed
+```
+
+---
+
+# 🛠️ Data Output
+
+Running the full pipeline (`python src/data_generation.py`) now saves every table to `data/raw/`:
+
+```text
+data/raw/
+├── dim_date.csv
+├── dim_product.csv
+├── dim_store.csv
+├── dim_customer.csv
+├── dim_supplier.csv
+├── fact_sales.csv
+└── fact_inventory.csv.gz      (gzip-compressed — ~10.96M rows)
+```
+
+`fact_inventory` is gzip-compressed because of its size; pandas reads it back transparently:
+
+```python
+fact_inventory = pd.read_csv("data/raw/fact_inventory.csv.gz")
+```
+
+`data/raw/`, `data/cleaned/`, and `data/processed/` are excluded from Git via `.gitignore` — only the generation code is versioned, not the generated data itself.
 
 ---
 
@@ -714,13 +810,17 @@ Implement recalibrated initial inventory and replenishment logic
 Implement daily inventory flow, continuity & reconciliation validation
 Wire complete data generation pipeline (generate_all_data)
 Implement inject_data_quality_issues() for controlled data messiness
+Implement validate_generated_dataset() with structural, financial, and data-quality checks
+Implement save_datasets() — persist generated tables to data/raw/
 ```
 
 ### Current Development Milestone
 
 ```text
-Implement validate_generated_dataset() and save_datasets()
+Full data generation pipeline complete — moving to notebooks (data profiling)
 ```
+
+Each major development stage is validated before moving to the next stage. Code and its corresponding README documentation update are committed together, as a single unit of change.
 
 ---
 
@@ -759,22 +859,17 @@ Implement validate_generated_dataset() and save_datasets()
 * [x] Stockout / low-stock / inventory status flags
 * [x] Full pipeline orchestration (`generate_all_data`)
 * [x] Controlled data-quality issue injection
-
-* [x] validate_generated_dataset() — automated structural/financial/business/data-quality checks
-
-
-* [x] save_datasets() — persist all generated tables to data/raw/ (CSV, fact_inventory gzip-compressed)
+* [x] `validate_generated_dataset()` — automated structural/financial/business/data-quality checks (30/30 passing)
+* [x] `save_datasets()` — persist all generated tables to `data/raw/` (CSV, `fact_inventory` gzip-compressed)
 
 ## In Progress
 
-* [ ] `validate_generated_dataset()` — automated structural/financial/business validation across all tables
-* [ ] `save_datasets()` — persist all generated tables to `data/raw/` as CSV
 * [ ] Remove/refactor dead `_run_sequential_inventory_simulation` (superseded by vectorized cumulative approach)
-* [ ] save_datasets() — persist all generated tables to data/raw/ as CSV
-* [ ] Remove/refactor dead `_run_sequential_inventory_simulation`
+* [ ] `notebooks/01_data_profiling.ipynb` — profile the saved raw dataset
 
 ## Planned
 
+* [ ] Data cleaning (`02_data_cleaning.ipynb`) — resolve the injected data-quality issues
 * [ ] Inventory KPI calculations
 * [ ] Stockout analysis
 * [ ] Overstock analysis
@@ -809,13 +904,13 @@ Validate Inventory Health ✓
      ↓
 Inject Controlled Data-Quality Issues ✓
      ↓
-Validate Generated Dataset (structural / business rules)  
+Validate Generated Dataset ✓
      ↓
-Implement save_datasets()
+Save Datasets to CSV ✓
      ↓
-Full data generation pipeline complete — moving to notebooks (data profiling)
+Data Profiling (01_data_profiling.ipynb)  ← current
      ↓
-Save Datasets to CSV
+Data Cleaning (02_data_cleaning.ipynb)
      ↓
 Inventory KPIs
      ↓
@@ -826,7 +921,7 @@ Overstock Analysis
 Replenishment Analysis
 ```
 
-The project will deliberately avoid introducing stockout and replenishment business conclusions until the underlying inventory-flow model is calibrated and validated — which it now is.
+The entire Python data-generation phase of the project is now complete: dimensions, facts, demand calibration, replenishment logic, validation, and persistence. The project now moves from **data engineering** into **data analysis** — starting with profiling the saved dataset.
 
 ---
 
