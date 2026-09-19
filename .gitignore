@@ -91,3 +91,15 @@ outputs/reports/
 # ============================================================
 
 *.pbi/
+
+# ============================================================
+# Generated Data
+# ============================================================
+
+data/raw/*
+data/cleaned/*
+data/processed/*
+
+!data/raw/.gitkeep
+!data/cleaned/.gitkeep
+!data/processed/.gitkeep
