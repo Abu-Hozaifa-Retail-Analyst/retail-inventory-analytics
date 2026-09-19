@@ -189,17 +189,23 @@ def validate_fact_sales(fact_sales):
     if missing_columns:
         return False
 
+    checks = []
+
     # --------------------------------------------------------
     # Transaction ID validation
     # --------------------------------------------------------
 
     duplicate_transactions = fact_sales["transaction_id"].duplicated().sum()
 
+    duplicate_transactions_ok = duplicate_transactions == 0
+
     print_check(
         "Transaction ID uniqueness",
-        duplicate_transactions == 0,
+        duplicate_transactions_ok,
         f"Duplicate transactions: {duplicate_transactions}",
     )
+
+    checks.append(duplicate_transactions_ok)
 
     # --------------------------------------------------------
     # Quantity validation
@@ -207,11 +213,15 @@ def validate_fact_sales(fact_sales):
 
     invalid_quantity = (fact_sales["quantity"] <= 0).sum()
 
+    invalid_quantity_ok = invalid_quantity == 0
+
     print_check(
         "Positive sales quantity",
-        invalid_quantity == 0,
+        invalid_quantity_ok,
         f"Invalid quantity rows: {invalid_quantity}",
     )
+
+    checks.append(invalid_quantity_ok)
 
     # --------------------------------------------------------
     # Date validation
@@ -219,11 +229,15 @@ def validate_fact_sales(fact_sales):
 
     invalid_dates = fact_sales["transaction_date"].isna().sum()
 
+    invalid_dates_ok = invalid_dates == 0
+
     print_check(
         "Sales dates",
-        invalid_dates == 0,
+        invalid_dates_ok,
         f"Missing transaction dates: {invalid_dates}",
     )
+
+    checks.append(invalid_dates_ok)
 
     # --------------------------------------------------------
     # Foreign-key completeness
@@ -236,13 +250,17 @@ def validate_fact_sales(fact_sales):
     ]:
         missing_values = fact_sales[column].isna().sum()
 
+        missing_values_ok = missing_values == 0
+
         print_check(
             f"{column} completeness",
-            missing_values == 0,
+            missing_values_ok,
             f"Missing values: {missing_values}",
         )
 
-    return True
+        checks.append(missing_values_ok)
+
+    return all(checks)
 
 
 # ============================================================
@@ -865,9 +883,22 @@ def validate_inventory_policy(fact_inventory):
         fact_inventory["lead_time_demand"] + fact_inventory["safety_stock_units"]
     )
 
-    rop_difference = fact_inventory["reorder_point"] - expected_rop
-
-    rop_failures = (rop_difference.abs() > 0.000001).sum()
+    # np.isclose combines a relative tolerance (rtol) and an absolute
+    # tolerance (atol): |a - b| <= atol + rtol * |b|. This is
+    # necessary rather than a fixed epsilon because fact_inventory
+    # may be float32 (downcast before saving in save_datasets()),
+    # where independent per-column rounding of derived columns
+    # naturally breaks exact equality between formulas like
+    # reorder_point = lead_time_demand + safety_stock_units, even
+    # when the underlying calculation was correct.
+    rop_failures = (
+        ~np.isclose(
+            fact_inventory["reorder_point"],
+            expected_rop,
+            rtol=1e-4,
+            atol=1e-4,
+        )
+    ).sum()
 
     print_check(
         "Reorder point formula",
@@ -885,9 +916,14 @@ def validate_inventory_policy(fact_inventory):
         + fact_inventory["safety_stock_units"]
     )
 
-    target_difference = fact_inventory["target_stock_level"] - expected_target
-
-    target_failures = (target_difference.abs() > 0.000001).sum()
+    target_failures = (
+        ~np.isclose(
+            fact_inventory["target_stock_level"],
+            expected_target,
+            rtol=1e-4,
+            atol=1e-4,
+        )
+    ).sum()
 
     print_check(
         "Target stock formula",
