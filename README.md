@@ -884,27 +884,24 @@ Each major development stage is validated before moving to the next stage. Code 
 * [x] 01_data_profiling.ipynb — full profiling of all 7 tables, validation checkpoint
 * [x] 02_data_cleaning.ipynb — resolves all planted data-quality issues, re-validates clean (15 PASS / 0 FAIL / 2 REVIEW)
 * [x] 03_inventory_kpis.ipynb — overall/product/store KPIs; identifies systemic overstock (turnover 0.0035, GMROI 0.0044, 99.2% of products excess inventory) with MOQ-vs-demand mismatch as root cause
+* [x] 04_stockout_analysis.ipynb — confirms zero true stockouts; identifies fast-moving + long-lead-time products as the real (if currently latent) risk concentration; demand-spike stress test shows real fragility at 3x+ demand, safety-stock cuts shown to be structurally irrelevant
+
 
 ## In Progress
 
-* [ ] 04_stockout_analysis.ipynb
+[ ] 05_overstock_analysis.ipynb
 
 ## Planned
 
-* [ ] Data cleaning (`02_data_cleaning.ipynb`) — resolve the injected data-quality issues
-* [ ] Inventory KPI calculations
-* [ ] Stockout analysis
-* [ ] Overstock analysis
-* [ ] ABC analysis
+* [ ] 06_abc_analysis.ipynb
 * [ ] Inventory aging
-* [ ] Replenishment analysis
+* [ ] 07_replenishment_analysis.ipynb
 * [ ] Store/product diagnosis
 * [ ] Root-cause analysis
 * [ ] SQL Server implementation
 * [ ] Power BI dashboard
 * [ ] Business recommendations
 * [ ] Final portfolio documentation
-
 ---
 
 # 🧭 Current Development Roadmap
