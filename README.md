@@ -114,15 +114,15 @@ The project uses a synthetic dataset representing a GCC retail business.
 
 ### Current Dataset Scope
 
-| Entity                    |                   Volume |
-| -------------------------- | -----------------------: |
-| Stores                     |                       20 |
-| Products                   |                      500 |
-| Customers                  |                    5,000 |
-| Suppliers                  |                       30 |
-| Date Range                 | 2023-01-01 to 2025-12-31 |
-| Target Sales Transactions  |                  125,000 |
-| Inventory Records (daily)  |               10,960,000 |
+| Entity                     |                   Volume |
+| --------------------------- | -----------------------: |
+| Stores                      |                       20 |
+| Products                    |                      500 |
+| Customers                   |                    5,000 |
+| Suppliers                   |                       30 |
+| Date Range                  | 2023-01-01 to 2025-12-31 |
+| Target Sales Transactions   |                  125,000 |
+| Inventory Records (daily)   |               10,960,000 |
 
 The dataset is intentionally generated with realistic retail relationships rather than being a random collection of numbers.
 
@@ -164,8 +164,8 @@ dim_product ─── fact_inventory ─── dim_store
 
 #### Fact Tables
 
-* `fact_sales` — generated, validated, and saved to `data/raw/fact_sales.csv`
-* `fact_inventory` — generated, validated, and saved to `data/raw/fact_inventory.csv.gz` (gzip-compressed, ~10.96M rows)
+* `fact_sales` — generated, validated, cleaned, and saved to `data/raw/fact_sales.csv` (raw) / `data/cleaned/fact_sales.csv` (cleaned)
+* `fact_inventory` — generated, validated, and saved to `data/raw/fact_inventory.csv.gz` (gzip-compressed, ~10.96M rows); never modified by cleaning (had zero planted issues)
 
 ---
 
@@ -193,7 +193,10 @@ retail-inventory-analytics/
 │   ├── data_loader.py
 │   ├── data_cleaning.py
 │   ├── data_validation.py
+│   ├── data_profiling.py
 │   ├── inventory_kpis.py
+│   ├── stockout_analysis.py
+│   ├── overstock_analysis.py
 │   ├── utils.py
 │   ├── data_generation_config.py
 │   ├── validate_generation_config.py
@@ -278,7 +281,7 @@ Data Validation
 Save Datasets
 ```
 
-The full pipeline is now orchestrated end to end through a single entry point:
+The full pipeline is orchestrated end to end through a single entry point:
 
 ```python
 generate_all_data()
@@ -290,37 +293,17 @@ which calls every generation stage in sequence, validates the result, persists i
 python src/data_generation.py
 ```
 
-now produces a complete, validated, saved dataset with **no manual steps required**.
+produces a complete, validated, saved dataset with **no manual steps required**.
 
 ---
 
 # 📅 Date Dimension
 
-The project currently generates a date dimension covering:
-
 ```text
 2023-01-01 → 2025-12-31
 ```
 
-This produces **1,096 calendar days**, including leap-year coverage for 2024.
-
-The date dimension includes fields such as:
-
-* Date
-* Year
-* Quarter
-* Month
-* Month Name
-* Week of Year
-* Day
-* Day Name
-* Day of Week
-* Weekend Flag
-* Season
-* Ramadan Flag
-* Eid Period Flag
-
-### Validation
+**1,096 calendar days**, including leap-year coverage for 2024. Includes Date, Year, Quarter, Month, Month Name, Week of Year, Day, Day Name, Day of Week, Weekend Flag, Season, Ramadan Flag, Eid Period Flag.
 
 ```text
 ✓ Date range validated
@@ -333,18 +316,7 @@ The date dimension includes fields such as:
 
 # 🏭 Supplier Dimension
 
-The supplier dimension currently models:
-
-* Supplier ID
-* Supplier Name
-* Supplier Region
-* Lead Time
-* Minimum Order Quantity
-* Supplier Status
-
-Supplier regions include Local, Regional, and International, each with different synthetic lead-time ranges.
-
-### Validation
+Supplier ID, Name, Region (Local / Regional / International, each with different synthetic lead-time ranges), Lead Time, Minimum Order Quantity, Supplier Status.
 
 ```text
 ✓ 30 suppliers configured
@@ -358,30 +330,11 @@ Supplier regions include Local, Regional, and International, each with different
 
 # 📦 Product Dimension
 
-The product dimension currently contains Product ID, Name, Category, Subcategory, Brand, Supplier ID, Unit Cost, Selling Price, Product Status, Launch Date, Shelf Life, Demand Class, Demand Trajectory, and Base Demand.
+Product ID, Name, Category, Subcategory, Brand, Supplier ID, Unit Cost, Selling Price, Product Status, Launch Date, Shelf Life, Demand Class, Demand Trajectory, Base Demand.
 
-### Demand Classes
-
-```text
-Fast-moving
-Medium-moving
-Slow-moving
-```
-
-### Demand Trajectories
-
-```text
-Growing
-Stable
-Declining
-Volatile
-```
-
-### Product Categories
-
-Grocery, Beverages, Personal Care, Household, Electronics, Fashion, Home & Living, Beauty
-
-### Validation
+**Demand Classes:** Fast-moving · Medium-moving · Slow-moving
+**Demand Trajectories:** Growing · Stable · Declining · Volatile
+**Categories:** Grocery, Beverages, Personal Care, Household, Electronics, Fashion, Home & Living, Beauty
 
 ```text
 ✓ 500 products generated
@@ -395,11 +348,7 @@ Grocery, Beverages, Personal Care, Household, Electronics, Fashion, Home & Livin
 
 # 🏪 Store Dimension
 
-Store formats: Hypermarket, Supermarket, Express, E-commerce, distributed across Riyadh, Jeddah, Makkah, Madinah, Dammam, Khobar, Tabuk, and Abha.
-
-Each store has a synthetic demand factor based on store type and region.
-
-### Validation
+Formats: Hypermarket, Supermarket, Express, E-commerce, across Riyadh, Jeddah, Makkah, Madinah, Dammam, Khobar, Tabuk, Abha. Each store has a synthetic demand factor based on store type and region.
 
 ```text
 ✓ 20 stores generated
@@ -411,11 +360,8 @@ Each store has a synthetic demand factor based on store type and region.
 
 # 👥 Customer Dimension
 
-**5,000 synthetic customers** with Segment, Gender, Age Group, City, Tenure, Preferred Channel, Purchase Frequency Factor, Average Basket Factor, and Price Sensitivity.
-
-Segments: Premium, Regular, Value, New.
-
-### Validation
+**5,000 synthetic customers** — Segment, Gender, Age Group, City, Tenure, Preferred Channel, Purchase Frequency Factor, Average Basket Factor, Price Sensitivity.
+**Segments:** Premium · Regular · Value · New
 
 ```text
 ✓ 5,000 customers generated, IDs unique
@@ -427,7 +373,7 @@ Segments: Premium, Regular, Value, New.
 
 # 💰 Sales Fact Table
 
-`fact_sales` is completed, validated, and persisted: **125,000 transactions**.
+`fact_sales`: **125,125 transactions generated** → **125,000 after cleaning** (125 planted duplicate transactions removed in `02_data_cleaning.ipynb`).
 
 ### Sales Calculation Logic
 
@@ -442,28 +388,17 @@ Gross Profit     = Net Sales − COGS
 ### Demand Modeling
 
 ```text
-Base Demand
-     × Demand Class
-     × Demand Trajectory
-     × Store Demand
-     × Customer Behavior
-     × Day-of-Week
-     × Seasonality
-     × Promotion
-     × Random Variation
-     × Demand Spikes
+Base Demand × Demand Class × Demand Trajectory × Store Demand
+× Customer Behavior × Day-of-Week × Seasonality × Promotion
+× Random Variation × Demand Spikes
 ```
 
-### Promotion Validation
+### Promotion & Seasonality Validation
 
 ```text
 Non-promotion average quantity ≈ 4.35
 Promotion average quantity     ≈ 4.97
-```
 
-### Seasonality Validation
-
-```text
 ✓ Summer has the highest average quantity among standard seasons
 ✓ Ramadan demand is higher than normal-period demand
 ✓ Eid-period demand is higher than normal-period demand
@@ -473,93 +408,55 @@ Promotion average quantity     ≈ 4.97
 ### Sales Data Validation
 
 ```text
-Structural
-✓ 125,000 transactions
-✓ Product / Store / Customer IDs valid (100% referential integrity)
-
-Financial
-✓ Quantity > 0, Unit Price > 0
-✓ Gross Sales ≥ Net Sales, Net Sales > 0, COGS > 0
-✓ All derived calculations verified correct
-
-Business Behavior
-✓ Fast-moving (5.29) > Medium-moving (1.67) > Slow-moving (1.51) avg quantity
-✓ Promotions generate higher average quantities
-✓ Seasonal / Ramadan / Eid demand uplift present
-✓ Ramadan/Eid periods mutually exclusive
+Structural: 125,000 transactions, unique IDs, 100% referential integrity
+Financial:  Quantity>0, Unit Price>0, all derived calculations verified correct
+Business:   Fast-moving (5.29) > Medium-moving (1.67) > Slow-moving (1.51) avg qty
+            Promotions generate higher average quantities
+            Seasonal / Ramadan / Eid demand uplift present
 ```
 
 ---
 
-# 📦 Inventory Analytics — Fact Table Generated, Validated & Saved
+# 📦 Inventory Fact Table — Generated, Validated & Saved
 
-`fact_inventory` generation is now **complete, validated, and persisted** end-to-end.
-
-Grain: **one row = one product × one store × one day**
+`fact_inventory` grain: **one row = one product × one store × one day**
 
 ```text
 20 stores × 500 products × 1,096 days = 10,960,000 rows
 ```
 
-Inventory flow modeled as:
-
 ```text
-Opening Stock
-+ Receipts
-+ Transfers In
-− Transfers Out
-− Sales
-+ Returns
-− Damaged Units
-± Inventory Adjustments
-= Closing Stock
+Opening Stock + Receipts + Transfers In − Transfers Out − Sales
++ Returns − Damaged Units ± Inventory Adjustments = Closing Stock
 ```
 
 ### Actual Demand Calibration
 
-Initial theoretical demand (`Base Demand × Store Demand Factor`) was found to overstate real demand, so inventory is calibrated against **observed historical sales** instead:
+Theoretical demand (`Base Demand × Store Demand Factor`) overstated real demand, so inventory is calibrated against **observed historical sales**:
 
 ```text
-Actual Average Daily Demand = Total Historical Sales Units ÷ Number of Calendar Days
-Active-Day Demand Rate      = Total Historical Sales Units ÷ Number of Active Selling Days
+Active-Day Demand Rate = Total Historical Sales Units ÷ Number of Active Selling Days
 ```
 
-`active_day_demand_rate` is used as the calibrated `demand_rate` driving all downstream inventory logic, since the synthetic sales dataset is sparse relative to the full product-store-day calendar.
+used as `demand_rate` for all downstream inventory logic (the sales dataset is sparse relative to the full product-store-day calendar, so calendar-day averaging would understate real demand intensity).
 
 ```text
-Product-store combinations: 10,000
-Product-store combinations with sales: 7,825
-Mean active-day demand rate: 2.33 units/day
-Median active-day demand rate: 1.75 units/day
-Max active-day demand rate: 8.39 units/day
+Product-store combinations: 10,000 (7,825 with any sales)
+Mean active-day demand rate: 2.33 units/day | Median: 1.75 | Max: 8.39
 ```
 
-### Recalibrated Initial Inventory
+### Recalibrated Initial Inventory & Replenishment Logic
 
 ```text
-Initial Stock = Calibrated Demand Rate × Initial Inventory Days (by demand class)
+Initial Stock       = Calibrated Demand Rate × Initial Inventory Days (by demand class)
+Safety Stock        = Demand Rate × Safety Stock Days (by demand class)
+Lead-Time Demand    = Demand Rate × Supplier Lead Time
+Reorder Point (ROP) = Lead-Time Demand + Safety Stock
+Review-Period Demand= Demand Rate × Replenishment Interval
+Target Stock Level  = Lead-Time Demand + Review-Period Demand + Safety Stock
 ```
 
-```text
-count    10,960,000
-mean          35.25
-50%           34.00
-max          225.00
-```
-
-Down from a theoretical-demand mean of ~115 units — confirming the recalibration meaningfully corrected over-stocking.
-
-### Replenishment Logic
-
-Implemented in full:
-
-* **Safety stock** = demand rate × safety stock days (by demand class)
-* **Lead-time demand** = demand rate × supplier lead time
-* **Reorder point (ROP)** = lead-time demand + safety stock
-* **Review-period demand** = demand rate × replenishment interval
-* **Target stock level** = lead-time demand + review-period demand + safety stock
-* **Planned order quantity**, triggered only on periodic review dates, respecting each supplier's minimum order quantity (MOQ)
-* Orders converted into **receipt events** on their expected receipt date (`order date + lead time`)
+Orders trigger only on periodic review dates, respect each supplier's minimum order quantity (MOQ), and convert into receipt events on `order date + lead time`.
 
 ```text
 Replenishment review events: 818,440
@@ -567,206 +464,223 @@ Replenishment orders created: 730,069
 Receipt events created: 730,069
 ```
 
-### Daily Inventory Flow & Reconciliation
-
-Closing stock is computed as a running cumulative balance per product-store combination:
-
-```text
-Closing Stock = Initial Opening Stock + Σ(Net Inventory Change)
-Net Inventory Change = Receipts + Transfers In − Transfers Out − Sales + Returns − Damaged + Adjustments
-Opening Stock (day n) = Closing Stock (day n−1)
-```
-
 ### Validation Results
 
 ```text
-✓ Inventory continuity check   — 10,950,000 rows checked, 0 failures
-✓ Inventory reconciliation      — 0 failures
-✓ Negative inventory check      — 0 negative rows (0.00%)
-✓ fact_inventory row count matches expected grain — 10,960,000 rows
-```
-
-### Inventory Status Distribution
-
-```text
-Healthy      10,926,211
-Low Stock        33,789
-Stockout               0
+✓ Inventory continuity   — 10,950,000 rows checked, 0 failures
+✓ Inventory reconciliation — 0 failures
+✓ Negative inventory      — 0 rows (0.00%)
+✓ Row count matches expected grain — 10,960,000 rows
 ```
 
 ```text
-Replenishment Orders : 730,069
-Receipt Events        : 722,087
-Sales Events          : 122,236
-Low Stock Events      :  33,789
-Stockout Events       :       0
+Inventory status:  Healthy 10,926,211 | Low Stock 33,789 | Stockout 0
+Events: Replenishment Orders 730,069 | Receipts 722,087 | Sales 122,236
+        | Low Stock 33,789 | Stockout 0
 ```
-
-Zero real stockouts is an expected result of well-calibrated safety stock / reorder-point logic on synthetic demand — this will be a deliberate discussion point in the eventual Stockout Analysis notebook (e.g. testing what happens under tighter safety-stock assumptions or demand shocks).
 
 ---
 
 # 🧪 Controlled Data-Quality Injection
 
-To make the downstream data-cleaning notebook (`02_data_cleaning.ipynb`) meaningful, a small, controlled set of data-quality issues is deliberately injected **after** generation and validation of the core datasets — not into `fact_inventory`, to avoid contradicting the reconciliation/continuity checks above.
-
-Implemented via `inject_data_quality_issues()`:
+`inject_data_quality_issues()` deliberately plants a small, controlled set of issues **after** core generation/validation — not into `fact_inventory`, to avoid contradicting its continuity/reconciliation checks — so `02_data_cleaning.ipynb` has real, known problems to detect and fix.
 
 ```text
-✓ Missing brand values injected into dim_product
-✓ Missing city values injected into dim_customer
-✓ Inconsistent city text formatting injected into dim_store (case + whitespace)
-✓ Missing supplier_name values injected into dim_supplier
-✓ Duplicate transactions injected into fact_sales
+✓ Missing brand values → dim_product
+✓ Missing city values → dim_customer
+✓ Inconsistent city text formatting (case + whitespace) → dim_store
+✓ Missing supplier_name values → dim_supplier
+✓ Duplicate transactions → fact_sales
 ```
 
-Controlled by `DATA_QUALITY_ISSUE_PROBABILITY` in `data_generation_config.py` (default 0.1%, scaled up for very small tables like `dim_store` so issues remain visible).
-
-### Latest Injection Run
+Controlled by `DATA_QUALITY_ISSUE_PROBABILITY` (default 0.1%, scaled up for tiny tables like `dim_store` so issues stay visible).
 
 ```text
-dim_product      : 0 missing brand values
-dim_customer     : 4 missing city values
-dim_store        : 0 inconsistent city text values
-dim_supplier     : 1 missing supplier_name value
-fact_sales       : 125 duplicate transactions
+Latest injection run:
+dim_product  : 0 missing brand values
+dim_customer : 4 missing city values
+dim_store    : 0 inconsistent city text values
+dim_supplier : 1 missing supplier_name value
+fact_sales   : 125 duplicate transactions
 ```
 
-Note: exact counts vary slightly run to run because they're probability-driven against small tables (e.g. 500 products × 0.1% ≈ 0.5 expected) — this is expected variance, not a bug. `fact_sales` (125,000 rows) reliably produces visible duplicates every run.
+Exact counts vary run to run (probability-driven on small tables) — expected variance, not a bug.
 
 ---
 
 # 🧪 Automated Dataset Validation
 
-`validate_generated_dataset()` runs a full suite of automated checks across every generated table after generation and data-quality injection, replacing what was previously manual/visual inspection of print statements.
+`validate_generated_dataset()` (in `src/data_validation.py`) runs a full suite of structural, financial, business-rule, and inventory-policy checks across every table — 17 checks total, reused identically inside `data_generation.py`, `01_data_profiling.ipynb`, and `02_data_cleaning.ipynb`, so "correctness" always means the same thing everywhere in this project.
 
-### A note on "DATA VALIDATION FAILED"
-
-When `INJECT_DATA_QUALITY_ISSUES = True` (the default), the validation
-summary will show `fact_sales: FAIL` and an overall
-`DATA VALIDATION FAILED` message — this is expected, not a bug. The
-planted duplicate transactions (see "Controlled Data-Quality Injection"
-above) are a real, deliberate integrity issue at this stage of the
-pipeline, and `validate_generated_dataset()` reports them honestly
-rather than distinguishing "expected" issues from genuine bugs in code.
-That distinction is intentionally left to the reader, not automated —
-automating it risks quietly hiding a real future failure behind an
-"expected" label. The FAIL should disappear once `02_data_cleaning.ipynb`
-removes the duplicates and the dataset is re-validated.
-
-Latest run: **14 PASS / 1 FAIL (fact_sales — expected) / 2 REVIEW
-(inventory_reconciliation, lost_sales — architectural, not applicable
-to the current model).**
-
-### Structural Validation
+**On "DATA VALIDATION FAILED":** when `INJECT_DATA_QUALITY_ISSUES = True` (default), `fact_sales` correctly shows FAIL due to the planted duplicates — expected, not a bug. Validation is intentionally strict and does not auto-suppress known-expected issues (that risk hides real future bugs behind an "expected" label); the FAIL clears once `02_data_cleaning.ipynb` removes the duplicates.
 
 ```text
-✓ Row counts match configuration for every dimension table
-✓ fact_sales referential integrity (product_id, store_id, customer_id all resolve)
-✓ fact_inventory row count matches expected grain (stores × products × days)
+Pre-cleaning run:  14 PASS / 1 FAIL (fact_sales — expected) / 2 REVIEW
+Post-cleaning run: 15 PASS / 0 FAIL / 2 REVIEW
 ```
 
-### Financial Validation
+The 2 REVIEW items (`inventory_reconciliation`, `lost_sales`) are architectural, not defects — they check for `demand_units` / `fulfilled_sales_units` / `lost_sales_units` columns belonging to an earlier row-by-row simulation design this project no longer uses. The current vectorized model reconciles through cumulative closing stock instead, which `inventory_continuity` already confirms holds exactly (0 failures).
 
-```text
-✓ Quantity > 0, Unit Price > 0
-✓ Gross Sales ≥ Net Sales, Net Sales > 0, COGS > 0
-✓ Gross Sales / Net Sales / COGS / Gross Profit calculations all verified correct
-```
-
-### Business Behavior Validation
-
-```text
-✓ Fast-moving > Medium-moving > Slow-moving average quantity
-✓ Promotions generate higher average quantities than non-promotions
-✓ Ramadan / Eid periods are mutually exclusive
-```
-
-### Inventory Validation
-
-```text
-✓ No negative closing or opening stock
-✓ Inventory continuity holds (opening stock = previous day's closing stock)
-```
-
-### Data-Quality Validation (informational — reports counts, does not fail the run)
-
-```text
-✓ Missing brand / city / supplier_name counts reported
-✓ Inconsistent city formatting count reported
-✓ Duplicate transaction count reported
-```
-
-### Latest Validation Run
-
-```text
-Validation summary: 30/30 checks passed
-```
+Two real bugs were found and fixed during this validation work, documented rather than silently patched:
+* `validate_inventory_policy()` had an indentation bug making `expected_rop` unreachable, plus a hardcoded float64-precision tolerance that broke once `fact_inventory` was downcast to float32 for memory efficiency — fixed with `np.isclose(rtol=1e-4, atol=1e-4)`.
+* `validate_fact_sales()` always returned `True` regardless of its internal checks (a `numpy.bool_` vs Python `True` identity-check bug in the aggregation loop, plus a bare `return True`) — fixed to properly aggregate with `all(checks)`.
 
 ---
 
 # 🛠️ Data Output
 
-Running the full pipeline (`python src/data_generation.py`) now saves every table to `data/raw/`:
-
 ```text
 data/raw/
-├── dim_date.csv
-├── dim_product.csv
-├── dim_store.csv
-├── dim_customer.csv
-├── dim_supplier.csv
+├── dim_date.csv, dim_product.csv, dim_store.csv, dim_customer.csv, dim_supplier.csv
 ├── fact_sales.csv
-└── fact_inventory.csv.gz      (gzip-compressed — ~10.96M rows)
+└── fact_inventory.csv.gz   (gzip-compressed, ~10.96M rows)
+
+data/cleaned/                (written by 02_data_cleaning.ipynb)
+├── dim_product.csv, dim_store.csv, dim_customer.csv, dim_supplier.csv
+└── fact_sales.csv           (125,000 rows, duplicates removed)
 ```
 
-`fact_inventory` is gzip-compressed because of its size; pandas reads it back transparently:
+`fact_inventory` is gzip-compressed for size; pandas reads it back transparently (`pd.read_csv("data/raw/fact_inventory.csv.gz")`). `downcast_dtypes()` (`src/utils.py`) shrinks numeric dtypes to the smallest safe size for memory efficiency — applied once before saving (peak-RAM benefit) and again after loading in analysis notebooks (the benefit that actually matters day to day, since CSV stores every value as text and does not preserve dtypes across a save/load round trip).
 
-```python
-fact_inventory = pd.read_csv("data/raw/fact_inventory.csv.gz")
+`data/raw/`, `data/cleaned/`, `data/processed/` are excluded from Git via `.gitignore` — only code is versioned, not generated data.
+
+---
+
+# 🧹 Data Profiling & Cleaning
+
+**`01_data_profiling.ipynb`** — profiles all 7 tables (shape, memory, missingness, duplicates, text-formatting consistency via a generic normalize-and-compare scanner in `src/data_profiling.py`) and runs the full validation checkpoint inline. Correctly surfaced every planted issue (4 missing customer cities, 1 missing supplier name, 125 duplicate transactions) plus two legitimate business findings that are *not* data-quality defects: ~21.75% of product-store combinations never recorded a sale, and ~90% of inventory-days carry more than 365 days of coverage.
+
+**`02_data_cleaning.ipynb`** — resolves the planted issues via `src/data_cleaning.py`: missing `dim_customer.city` and `dim_supplier.supplier_name` imputed with clear, traceable placeholders (e.g. `"Unknown Supplier (SUP014)"`); `dim_store.city` text normalized (strip + title case); `fact_sales` duplicates dropped, keeping first occurrence. Every function returns a new DataFrame (never mutates in place) and prints a before/after report. Re-validation after cleaning: **`fact_sales` flips from FAIL to PASS**, overall **15 PASS / 0 FAIL / 2 REVIEW**. `dim_product` and `fact_inventory` are deliberately left untouched — no planted issues to fix.
+
+---
+
+# 📊 Inventory KPI Analysis — Completed (`03_inventory_kpis.ipynb`)
+
+KPIs computed at three grains — **overall, per-product, per-store** — across the full 3-year period via `src/inventory_kpis.py`. Data sources are deliberately mixed: dimensions/`fact_sales` from `data/cleaned/`, `fact_inventory` from `data/raw/` (it was never modified by cleaning, and its `sales_units` already matches the cleaned `fact_sales`).
+
+```text
+Inventory Turnover (annualized) = Annualized COGS ÷ Average Inventory Value
+Days of Inventory                = 365 ÷ Inventory Turnover
+Sell-Through %                   = Units Sold ÷ (Beginning Inventory + Receipts)
+GMROI                            = Gross Profit ÷ Average Inventory Value
 ```
 
-`data/raw/`, `data/cleaned/`, and `data/processed/` are excluded from Git via `.gitignore` — only the generation code is versioned, not the generated data itself.
+### Headline Result: Severe, Systemic Overstock
+
+```text
+Inventory Turnover (annualized): 0.0035   → inventory turns over ~once per 287 years
+Days of Inventory:                104,950.50
+GMROI:                            0.0044   → <½ cent of gross profit per $1 tied up in inventory
+Sell-through:                     0.53%    of everything ever made available actually sold
+Stockout rate:                    0.00%
+Excess inventory share:           89.95% of inventory-days (row grain), 99.2% of products (grain)
+Dead stock:                       21.75% of product-store combinations, zero sales all period
+Gross margin:                     29.59% (healthy on its own — irrelevant if inventory never turns)
+```
+
+**Store-level pattern:** turnover is not uniform. Hypermarkets/E-commerce cluster at the top (best: STORE014, 0.0064 turnover); Express-format stores cluster at the bottom (~0.0011) — roughly a 6× spread, tracking `STORE_TYPE_DEMAND_FACTORS` (Express 0.55× vs Hypermarket 1.50× demand), suggesting Express stores are allocated inventory disproportionate to actual demand.
+
+**Root cause identified, not just symptom:** every replenishment order is floored at the supplier's minimum order quantity (MOQ, 10–500 units) regardless of how slow-moving the product is. For a product with demand_rate ~0.2–2 units/day, one MOQ-floored order can represent months to years of real demand — and with no markdown/write-off mechanism anywhere in the model, every oversized order compounds permanently across all 1,096 days.
 
 ---
 
-# 📊 Planned Inventory KPIs
+# 🚦 Stockout Analysis — Completed (`04_stockout_analysis.ipynb`)
 
-### Core KPIs
+**True stockout events are zero** (confirmed directly: `stockout_event` never True, `closing_stock` never negative, across all 10.96M rows) — for two compounding reasons: (1) *architectural* — `fact_sales` quantities are generated independently of stock on hand, uncapped; (2) *empirical* — the MOQ-driven oversupply above means demand never comes close to exhausting available stock anywhere.
 
-Inventory Turnover · Sell-through % · Stockout Rate · In-stock Rate · Average Inventory · Inventory Value · Days of Inventory · Inventory Coverage Days
+Since real stockouts don't exist, the notebook analyzes the closest real signal — `low_stock_event` (`closing_stock ≤ reorder_point`, still > 0; 33,789 events, 0.31% of rows) — as a near-miss/risk-proximity indicator, via `src/stockout_analysis.py`.
 
-### Inventory Risk
+```text
+Combinations with ≥1 low-stock day: 2,022 of 10,000 (20.2%)
 
-Slow-moving Inventory · Dead Stock · Excess Inventory · Stockout Risk · Replenishment Risk · Aging Inventory
+By demand class: Fast-moving 0.74% of days low-stock (1,077/1,840 combos)
+                 Slow-moving  0.00% — ZERO combos ever affected
+By supplier lead time: International 1.27% low-stock rate
+                       Local          0.0025% low-stock rate
+                       → International suppliers show a 500× higher low-stock rate than Local
+```
 
-### Profitability
+Fast-moving products carry nearly all real risk (they're the only ones that actually consume inventory fast enough to approach reorder point); slow-moving products are structurally incapable of ever getting close, for the same MOQ-oversupply reason that causes their excess.
 
-Gross Profit · Gross Margin % · GMROI
+### What-If Stress Tests (retrospective sensitivity, not a forecast)
 
-### Replenishment
+```text
+Demand spike:        1.5x → 0.54% of combos would go negative
+                      2.0x → 7.42%
+                      3.0x → 33.74%
+                      5.0x → 58.90%
+                     10.0x → 73.14%
 
-Safety Stock · Reorder Point · Lead Time · Minimum Order Quantity · Replenishment Priority
+Safety stock cut:    even a full 100% cut → only 0.01% of combos would go negative
+                     (safety stock ≈ 3–7 days of demand; dwarfed by MOQ-floored
+                      base inventory representing months-to-years of demand —
+                      safety-stock policy is structurally irrelevant here; MOQ
+                      sizing is the real lever)
+```
+
+**Overall read:** no current stockout problem, but real, quantified latent fragility to demand shocks (2–3× is not an extreme scenario) concentrated in fast-moving, internationally-supplied products.
 
 ---
 
-# 🔎 Planned Business Analysis
+# 📦 Overstock Analysis — Completed (`05_overstock_analysis.ipynb`)
 
-**Inventory Availability** — Which products/stores experience the most stockouts? Which high-demand products are frequently unavailable?
+Excess is defined against the inventory model's **own replenishment policy target**, not an external threshold — a meaningfully stronger basis than a fixed day-count cutoff:
 
-**Excess Inventory** — Which products/stores carry excessive or slow-moving stock?
+```text
+Excess Units = max(closing_stock − target_stock_level, 0)
+Excess Value = Excess Units × unit_cost
+```
 
-**Product Analysis** — Which products drive the most sales/profit? Which have high demand but poor availability?
+Implemented in `src/overstock_analysis.py`.
 
-**Store Analysis** — Which stores are overstocked or understocked? Where should inventory be transferred?
+```text
+Average daily total inventory value: $12.65B
+Average daily total excess value:    $12.52B
+Excess as % of total inventory value: 99.04%
+```
 
-**Supplier Analysis** — Which suppliers have long lead times or create replenishment risk?
+**Worst offenders:** top product PROD0132 (Laundry, Fast-moving, ~$247M avg excess value); top store STORE015 (Hypermarket, Western, ~$699M avg excess value). Notably, **PROD0367** (repeatedly flagged in stockout analysis as closest to a real stockout) does **not** appear among top overstock offenders — a meaningful cross-notebook consistency check: the products most at risk of running out and the products drowning in excess are, correctly, different products.
 
-**Replenishment** — Which products should be reordered first, and at what safety-stock level?
+**Concentration:** 153 of 500 products (30.6%) account for 80% of total average excess value — feeds directly into `06_abc_analysis.ipynb`.
+
+**MOQ attribution — measured directly, not estimated:**
+
+```text
+Total replenishment orders: 730,069
+Orders inflated above target by MOQ: 368,128 (50.4%)
+Total order-time overshoot value: $12.67B
+```
+
+**Capital recapture — retrospective counterfactual, explicitly not a forecast** (does not model how smaller historical orders would have changed subsequent days' closing stock or future reorder timing/sizing):
+
+```text
+Cap at 1.5x target: ~$10.17B would have been avoided (order-time, retrospective)
+Cap at 2.0x target: ~$8.36B
+Cap at 3.0x target: ~$5.82B
+Cap at 5.0x target: ~$2.83B
+```
+
+**Overall read:** overstock here is not diffuse — it's a near-total condition (99% of inventory value) with a specific, directly-measured mechanism (MOQ flooring, $12.67B of overshoot) and a moderately concentrated distribution (30.6% of products driving 80% of excess). MOQ policy reform, targeted first at the top ~150 products, is the highest-leverage intervention identified so far.
 
 ---
 
-# 📊 Planned ABC Analysis
+# 🔎 Business Analysis — Answered So Far
+
+**Inventory Availability** — *Answered (04):* real stockouts are zero; latent risk is concentrated in fast-moving, internationally-supplied products, fragile to 2–3×+ demand shocks.
+
+**Excess Inventory** — *Answered (03, 05):* 99.04% of inventory value is excess above policy target; concentrated in ~31% of products (153 of 500) driving 80% of excess value; root cause is MOQ flooring, measured at $12.67B in order-time overshoot.
+
+**Product Analysis** — *Partially answered:* worst overstock offenders identified by name (05); full profitability-vs-availability cross-analysis still pending ABC/replenishment notebooks.
+
+**Store Analysis** — *Partially answered:* turnover and excess both vary meaningfully by store type/region (03, 05); store-to-store transfer recommendations still pending.
+
+**Supplier Analysis** — *Answered (04):* International (long lead-time) suppliers show a 500× higher low-stock rate than Local suppliers.
+
+**Replenishment** — *Pending `07_replenishment_analysis.ipynb`:* reorder prioritization and safety-stock recommendations.
+
+---
+
+# 📊 ABC Analysis — In Progress (`06_abc_analysis.ipynb`)
 
 ```text
 A → Highest-value products
@@ -774,7 +688,7 @@ B → Medium-value products
 C → Lower-value products
 ```
 
-Goal: not "which products sell the most" but **"which products deserve the most inventory-management attention."**
+Goal: not "which products sell the most" but **"which products deserve the most inventory-management attention."** Will formalize the 153-products-drive-80%-of-excess-value concentration pattern already surfaced in `05_overstock_analysis.ipynb` into a full classification across the entire 500-product catalog.
 
 ---
 
@@ -802,16 +716,14 @@ Goal: not "which products sell the most" but **"which products deserve the most 
 # 🔄 Hybrid Analytics Architecture
 
 **Python** — synthetic data generation, profiling, cleaning, complex transformations, statistical/demand/inventory modeling.
-
 **SQL Server** — structured storage, validation, joins, KPI calculations, reusable views, analytical queries.
-
 **Power BI** — KPI dashboards, inventory health monitoring, store/product analysis, stockout visualization, management reporting.
 
 ---
 
 # 🌱 Git Development
 
-The project is developed incrementally using Git, with each stage validated before the next.
+The project is developed incrementally using Git, with each stage validated before the next. Code and its corresponding README update are committed together as a single unit of change.
 
 ```text
 Initialize retail inventory analytics project
@@ -830,15 +742,22 @@ Wire complete data generation pipeline (generate_all_data)
 Implement inject_data_quality_issues() for controlled data messiness
 Implement validate_generated_dataset() with structural, financial, and data-quality checks
 Implement save_datasets() — persist generated tables to data/raw/
+Add data_profiling.py and 01_data_profiling.ipynb
+Fix inventory column-name mismatch and PASS/FAIL/REVIEW scoring bug in data_validation.py
+Add data_cleaning.py and 02_data_cleaning.ipynb
+Add inventory_kpis.py and 03_inventory_kpis.ipynb — identifies systemic overstock
+Fix magnitude-aware KPI display formatting (turnover/GMROI no longer round to 0.00)
+Add stockout_analysis.py and 04_stockout_analysis.ipynb — confirms zero true stockouts, quantifies latent risk
+Add overstock_analysis.py and 05_overstock_analysis.ipynb — quantifies 99%+ excess inventory, measures MOQ attribution
 ```
 
 ### Current Development Milestone
 
 ```text
-Full data generation pipeline complete — moving to notebooks (data profiling)
+06_abc_analysis.ipynb — formalize the overstock concentration pattern
+(153 of 500 products drive 80% of excess value) into a full ABC
+classification across the product catalog
 ```
-
-Each major development stage is validated before moving to the next stage. Code and its corresponding README documentation update are committed together, as a single unit of change.
 
 ---
 
@@ -877,31 +796,32 @@ Each major development stage is validated before moving to the next stage. Code 
 * [x] Stockout / low-stock / inventory status flags
 * [x] Full pipeline orchestration (`generate_all_data`)
 * [x] Controlled data-quality issue injection
-* [x] `validate_generated_dataset()` — automated structural/financial/business/data-quality checks (30/30 passing)
+* [x] `validate_generated_dataset()` — automated structural/financial/business/data-quality checks
 * [x] `save_datasets()` — persist all generated tables to `data/raw/` (CSV, `fact_inventory` gzip-compressed)
-* [x] Fixed validate_inventory_policy() indentation bug + float32 tolerance (np.isclose)
-* [x] Fixed validate_fact_sales() to correctly aggregate its own check results
-* [x] 01_data_profiling.ipynb — full profiling of all 7 tables, validation checkpoint
-* [x] 02_data_cleaning.ipynb — resolves all planted data-quality issues, re-validates clean (15 PASS / 0 FAIL / 2 REVIEW)
-* [x] 03_inventory_kpis.ipynb — overall/product/store KPIs; identifies systemic overstock (turnover 0.0035, GMROI 0.0044, 99.2% of products excess inventory) with MOQ-vs-demand mismatch as root cause
-* [x] 04_stockout_analysis.ipynb — confirms zero true stockouts; identifies fast-moving + long-lead-time products as the real (if currently latent) risk concentration; demand-spike stress test shows real fragility at 3x+ demand, safety-stock cuts shown to be structurally irrelevant
-
-* [x] 05_overstock_analysis.ipynb — quantifies excess inventory against the model's own target_stock_level policy (99.04% of inventory value is excess); measures MOQ attribution directly (50.4% of replenishment orders inflated, $12.67B overshoot); retrospective capital-recapture estimate (~$8.36B at a 2x MOQ cap); 153 of 500 products (30.6%) drive 80% of excess value
+* [x] Fixed `validate_inventory_policy()` indentation bug + float32 tolerance (`np.isclose`)
+* [x] Fixed `validate_fact_sales()` to correctly aggregate its own check results
+* [x] `downcast_dtypes()` utility (`src/utils.py`) — applied at save time and at analysis-load time
+* [x] `01_data_profiling.ipynb` — full profiling of all 7 tables, validation checkpoint
+* [x] `02_data_cleaning.ipynb` — resolves all planted data-quality issues, re-validates clean (15 PASS / 0 FAIL / 2 REVIEW)
+* [x] `03_inventory_kpis.ipynb` — overall/product/store KPIs; identifies systemic overstock (turnover 0.0035, GMROI 0.0044, 99.2% of products excess inventory) with MOQ-vs-demand mismatch as root cause
+* [x] `04_stockout_analysis.ipynb` — confirms zero true stockouts; identifies fast-moving + long-lead-time products as the real (currently latent) risk concentration; demand-spike stress test shows real fragility at 3×+ demand; safety-stock cuts shown structurally irrelevant
+* [x] `05_overstock_analysis.ipynb` — quantifies excess against the model's own `target_stock_level` policy (99.04% of inventory value is excess); measures MOQ attribution directly (50.4% of replenishment orders inflated, $12.67B overshoot); retrospective capital-recapture estimate (~$8.36B at a 2× MOQ cap); 153 of 500 products (30.6%) drive 80% of excess value
 
 ## In Progress
 
-* [ ] 06_abc_analysis.ipynb
+* [ ] `06_abc_analysis.ipynb`
 
 ## Planned
 
 * [ ] Inventory aging
-* [ ] 07_replenishment_analysis.ipynb
+* [ ] `07_replenishment_analysis.ipynb`
 * [ ] Store/product diagnosis
 * [ ] Root-cause analysis
 * [ ] SQL Server implementation
 * [ ] Power BI dashboard
 * [ ] Business recommendations
 * [ ] Final portfolio documentation
+
 ---
 
 # 🧭 Current Development Roadmap
@@ -942,31 +862,22 @@ ABC Analysis (06_abc_analysis.ipynb)  ← current
 Replenishment Analysis (07_replenishment_analysis.ipynb)
 ```
 
-The entire Python data-generation phase of the project is complete: dimensions, facts, demand calibration, replenishment logic, validation, and persistence. Data profiling and cleaning are complete, producing a validated, trustworthy dataset (15 PASS / 0 FAIL / 2 REVIEW). Core inventory analysis is now well underway: KPIs established systemic overstock as the dominant finding (turnover ~0.0035, GMROI ~0.0044), stockout analysis confirmed zero true stockouts while identifying fast-moving/long-lead-time products as the real latent risk, and overstock analysis quantified the problem precisely — 99.04% of inventory value is excess above policy target, with 50.4% of replenishment orders directly measured as MOQ-inflated ($12.67B overshoot). The project now moves into **ABC analysis**, formalizing the 30.6%-of-products-drive-80%-of-excess concentration pattern already surfaced, before closing the analytical arc with replenishment recommendations.
+The entire Python data-generation phase is complete: dimensions, facts, demand calibration, replenishment logic, validation, and persistence. Data profiling and cleaning are complete, producing a validated, trustworthy dataset (15 PASS / 0 FAIL / 2 REVIEW). Core inventory analysis is well underway: KPIs established systemic overstock as the dominant finding (turnover ~0.0035, GMROI ~0.0044); stockout analysis confirmed zero true stockouts while identifying fast-moving/long-lead-time products as the real latent risk; overstock analysis quantified the problem precisely — 99.04% of inventory value is excess above policy target, with 50.4% of replenishment orders directly measured as MOQ-inflated ($12.67B overshoot). The project now moves into **ABC analysis**, formalizing the 30.6%-of-products-drive-80%-of-excess concentration pattern already surfaced, before closing the analytical arc with replenishment recommendations.
 
 ---
 
 # 💼 Business Value
 
 ```text
-Raw Data
-   ↓
-Data Quality
-   ↓
-Business Metrics
-   ↓
-Demand Calibration
-   ↓
-Inventory Diagnosis
-   ↓
-Root Cause
-   ↓
-Business Action
+Raw Data → Data Quality → Business Metrics → Demand Calibration
+→ Inventory Diagnosis → Root Cause → Business Action
 ```
 
 The goal is not simply to calculate KPIs. The goal is to answer:
 
 > **What is happening? Why is it happening? Which products/stores are affected? What should the retailer do? What business impact could the decision create?**
+
+This project's clearest answer so far: inventory turnover is near-zero (0.0035, ~287-year turn cycle) and 99.04% of inventory value is excess — caused specifically by supplier MOQ flooring (measured at $12.67B in order-time overshoot, concentrated in 153 of 500 products) — with a defensible retrospective estimate that capping MOQ enforcement at 2× policy target would have avoided roughly $8.36B of that overshoot.
 
 ---
 
@@ -988,4 +899,4 @@ Retail business analysis · Sales analytics · Inventory analytics · Demand ana
 
 > **Can data help a retailer keep the right products available at the right stores, reduce excess inventory, improve inventory efficiency, and protect profitability?**
 
-This project is designed to answer that question.
+This project is designed to answer that question — and has, so far, found and precisely quantified a severe, mechanistically-explained overstock problem as the primary answer.
