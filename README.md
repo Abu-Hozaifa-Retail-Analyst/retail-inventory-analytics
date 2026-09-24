@@ -886,14 +886,14 @@ Each major development stage is validated before moving to the next stage. Code 
 * [x] 03_inventory_kpis.ipynb — overall/product/store KPIs; identifies systemic overstock (turnover 0.0035, GMROI 0.0044, 99.2% of products excess inventory) with MOQ-vs-demand mismatch as root cause
 * [x] 04_stockout_analysis.ipynb — confirms zero true stockouts; identifies fast-moving + long-lead-time products as the real (if currently latent) risk concentration; demand-spike stress test shows real fragility at 3x+ demand, safety-stock cuts shown to be structurally irrelevant
 
+* [x] 05_overstock_analysis.ipynb — quantifies excess inventory against the model's own target_stock_level policy (99.04% of inventory value is excess); measures MOQ attribution directly (50.4% of replenishment orders inflated, $12.67B overshoot); retrospective capital-recapture estimate (~$8.36B at a 2x MOQ cap); 153 of 500 products (30.6%) drive 80% of excess value
 
 ## In Progress
 
-[ ] 05_overstock_analysis.ipynb
+* [ ] 06_abc_analysis.ipynb
 
 ## Planned
 
-* [ ] 06_abc_analysis.ipynb
 * [ ] Inventory aging
 * [ ] 07_replenishment_analysis.ipynb
 * [ ] Store/product diagnosis
@@ -927,20 +927,22 @@ Validate Generated Dataset ✓
      ↓
 Save Datasets to CSV ✓
      ↓
-Data Profiling (01_data_profiling.ipynb)  ← current
+Data Profiling (01_data_profiling.ipynb) ✓
      ↓
-Data Cleaning (02_data_cleaning.ipynb)
+Data Cleaning (02_data_cleaning.ipynb) ✓
      ↓
-Inventory KPIs
+Inventory KPIs (03_inventory_kpis.ipynb) ✓
      ↓
-Stockout Analysis
+Stockout Analysis (04_stockout_analysis.ipynb) ✓
      ↓
-Overstock Analysis
+Overstock Analysis (05_overstock_analysis.ipynb) ✓
      ↓
-Replenishment Analysis
+ABC Analysis (06_abc_analysis.ipynb)  ← current
+     ↓
+Replenishment Analysis (07_replenishment_analysis.ipynb)
 ```
 
-The entire Python data-generation phase of the project is now complete: dimensions, facts, demand calibration, replenishment logic, validation, and persistence. The project now moves from **data engineering** into **data analysis** — starting with profiling the saved dataset.
+The entire Python data-generation phase of the project is complete: dimensions, facts, demand calibration, replenishment logic, validation, and persistence. Data profiling and cleaning are complete, producing a validated, trustworthy dataset (15 PASS / 0 FAIL / 2 REVIEW). Core inventory analysis is now well underway: KPIs established systemic overstock as the dominant finding (turnover ~0.0035, GMROI ~0.0044), stockout analysis confirmed zero true stockouts while identifying fast-moving/long-lead-time products as the real latent risk, and overstock analysis quantified the problem precisely — 99.04% of inventory value is excess above policy target, with 50.4% of replenishment orders directly measured as MOQ-inflated ($12.67B overshoot). The project now moves into **ABC analysis**, formalizing the 30.6%-of-products-drive-80%-of-excess concentration pattern already surfaced, before closing the analytical arc with replenishment recommendations.
 
 ---
 
