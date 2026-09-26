@@ -167,6 +167,10 @@ dim_product ─── fact_inventory ─── dim_store
 * `fact_sales` — generated, validated, cleaned, and saved to `data/raw/fact_sales.csv` (raw) / `data/cleaned/fact_sales.csv` (cleaned)
 * `fact_inventory` — generated, validated, and saved to `data/raw/fact_inventory.csv.gz` (gzip-compressed, ~10.96M rows); never modified by cleaning (had zero planted issues)
 
+#### Derived / Analytical Output
+
+* `data/processed/replenishment_action_list.csv` — one row per product-store combination, the project's final actionable deliverable (see `07_replenishment_analysis.ipynb`)
+
 ---
 
 # 🧱 Current Project Structure
@@ -198,6 +202,7 @@ retail-inventory-analytics/
 │   ├── stockout_analysis.py
 │   ├── overstock_analysis.py
 │   ├── abc_analysis.py
+│   ├── replenishment_analysis.py
 │   ├── utils.py
 │   ├── data_generation_config.py
 │   ├── validate_generation_config.py
@@ -459,6 +464,8 @@ Target Stock Level  = Lead-Time Demand + Review-Period Demand + Safety Stock
 
 Orders trigger only on periodic review dates, respect each supplier's minimum order quantity (MOQ), and convert into receipt events on `order date + lead time`.
 
+**Important, discovered in `07_replenishment_analysis.ipynb`:** the order-quantity logic sets `planned_order_quantity = target_stock_level` (MOQ-floored) on every review date — it does **not** subtract existing on-hand stock first. This means every replenishment cycle re-orders the full target amount on top of whatever is already there, rather than ordering only the shortfall. See the Replenishment Analysis section below for the measured impact.
+
 ```text
 Replenishment review events: 818,440
 Replenishment orders created: 730,069
@@ -522,9 +529,10 @@ Post-cleaning run: 15 PASS / 0 FAIL / 2 REVIEW
 
 The 2 REVIEW items (`inventory_reconciliation`, `lost_sales`) are architectural, not defects — they check for `demand_units` / `fulfilled_sales_units` / `lost_sales_units` columns belonging to an earlier row-by-row simulation design this project no longer uses. The current vectorized model reconciles through cumulative closing stock instead, which `inventory_continuity` already confirms holds exactly (0 failures).
 
-Two real bugs were found and fixed during this validation work, documented rather than silently patched:
+Bugs found and fixed during this validation work, documented rather than silently patched:
 * `validate_inventory_policy()` had an indentation bug making `expected_rop` unreachable, plus a hardcoded float64-precision tolerance that broke once `fact_inventory` was downcast to float32 for memory efficiency — fixed with `np.isclose(rtol=1e-4, atol=1e-4)`.
-* `validate_fact_sales()` always returned `True` regardless of its internal checks (a `numpy.bool_` vs Python `True` identity-check bug in the aggregation loop, plus a bare `return True`) — fixed to properly aggregate with `all(checks)`.
+* `validate_fact_sales()` always returned `True` regardless of its internal checks (a `numpy.bool_` vs Python `True` identity-check bug, plus a bare `return True`) — fixed to properly aggregate with `all(checks)`.
+* `summarize_excess_by()` (in `src/overstock_analysis.py`) only supported a single grouping column; `07_replenishment_analysis.ipynb` needed combo-level (`store_id` + `product_id`) grouping — fixed to accept either a string or a list, fully backward-compatible with existing calls.
 
 ---
 
@@ -539,6 +547,9 @@ data/raw/
 data/cleaned/                (written by 02_data_cleaning.ipynb)
 ├── dim_product.csv, dim_store.csv, dim_customer.csv, dim_supplier.csv
 └── fact_sales.csv           (125,000 rows, duplicates removed)
+
+data/processed/               (written by 07_replenishment_analysis.ipynb)
+└── replenishment_action_list.csv   (10,000 rows — one per product-store combination)
 ```
 
 `fact_inventory` is gzip-compressed for size; pandas reads it back transparently (`pd.read_csv("data/raw/fact_inventory.csv.gz")`). `downcast_dtypes()` (`src/utils.py`) shrinks numeric dtypes to the smallest safe size for memory efficiency — applied once before saving (peak-RAM benefit) and again after loading in analysis notebooks (the benefit that actually matters day to day, since CSV stores every value as text and does not preserve dtypes across a save/load round trip).
@@ -581,7 +592,7 @@ Gross margin:                     29.59% (healthy on its own — irrelevant if i
 
 **Store-level pattern:** turnover is not uniform. Hypermarkets/E-commerce cluster at the top (best: STORE014, 0.0064 turnover); Express-format stores cluster at the bottom (~0.0011) — roughly a 6× spread, tracking `STORE_TYPE_DEMAND_FACTORS` (Express 0.55× vs Hypermarket 1.50× demand), suggesting Express stores are allocated inventory disproportionate to actual demand.
 
-**Root cause identified, not just symptom:** every replenishment order is floored at the supplier's minimum order quantity (MOQ, 10–500 units) regardless of how slow-moving the product is. For a product with demand_rate ~0.2–2 units/day, one MOQ-floored order can represent months to years of real demand — and with no markdown/write-off mechanism anywhere in the model, every oversized order compounds permanently across all 1,096 days.
+**Root cause identified (Stage 1 of 3):** every replenishment order is floored at the supplier's minimum order quantity (MOQ, 10–500 units) regardless of how slow-moving the product is.
 
 ---
 
@@ -601,7 +612,7 @@ By supplier lead time: International 1.27% low-stock rate
                        → International suppliers show a 500× higher low-stock rate than Local
 ```
 
-Fast-moving products carry nearly all real risk (they're the only ones that actually consume inventory fast enough to approach reorder point); slow-moving products are structurally incapable of ever getting close, for the same MOQ-oversupply reason that causes their excess.
+Fast-moving products carry nearly all real risk; slow-moving products are structurally incapable of ever getting close, for the same MOQ-oversupply reason that causes their excess.
 
 ### What-If Stress Tests (retrospective sensitivity, not a forecast)
 
@@ -614,18 +625,17 @@ Demand spike:        1.5x → 0.54% of combos would go negative
 
 Safety stock cut:    even a full 100% cut → only 0.01% of combos would go negative
                      (safety stock ≈ 3–7 days of demand; dwarfed by MOQ-floored
-                      base inventory representing months-to-years of demand —
-                      safety-stock policy is structurally irrelevant here; MOQ
-                      sizing is the real lever)
+                      base inventory — safety-stock policy is structurally
+                      irrelevant here; MOQ/order-sizing is the real lever)
 ```
 
-**Overall read:** no current stockout problem, but real, quantified latent fragility to demand shocks (2–3× is not an extreme scenario) concentrated in fast-moving, internationally-supplied products.
+**Overall read:** no current stockout problem, but real, quantified latent fragility to demand shocks concentrated in fast-moving, internationally-supplied products.
 
 ---
 
 # 📦 Overstock Analysis — Completed (`05_overstock_analysis.ipynb`)
 
-Excess is defined against the inventory model's **own replenishment policy target**, not an external threshold — a meaningfully stronger basis than a fixed day-count cutoff:
+Excess is defined against the inventory model's **own replenishment policy target**:
 
 ```text
 Excess Units = max(closing_stock − target_stock_level, 0)
@@ -640,11 +650,11 @@ Average daily total excess value:    $12.52B
 Excess as % of total inventory value: 99.04%
 ```
 
-**Worst offenders:** top product PROD0132 (Laundry, Fast-moving, ~$247M avg excess value); top store STORE015 (Hypermarket, Western, ~$699M avg excess value). Notably, **PROD0367** (repeatedly flagged in stockout analysis as closest to a real stockout) does **not** appear among top overstock offenders — a meaningful cross-notebook consistency check: the products most at risk of running out and the products drowning in excess are, correctly, different products.
+**Worst offenders:** top product PROD0132 (Laundry, Fast-moving, ~$247M avg excess value); top store STORE015 (Hypermarket, Western, ~$699M avg excess value).
 
 **Concentration:** 153 of 500 products (30.6%) account for 80% of total average excess value — feeds directly into `06_abc_analysis.ipynb`.
 
-**MOQ attribution — measured directly, not estimated:**
+**Root cause identified (Stage 2 of 3) — measured, not estimated:**
 
 ```text
 Total replenishment orders: 730,069
@@ -652,46 +662,23 @@ Orders inflated above target by MOQ: 368,128 (50.4%)
 Total order-time overshoot value: $12.67B
 ```
 
-**Capital recapture — retrospective counterfactual, explicitly not a forecast** (does not model how smaller historical orders would have changed subsequent days' closing stock or future reorder timing/sizing):
-
-```text
-Cap at 1.5x target: ~$10.17B would have been avoided (order-time, retrospective)
-Cap at 2.0x target: ~$8.36B
-Cap at 3.0x target: ~$5.82B
-Cap at 5.0x target: ~$2.83B
-```
-
-**Overall read:** overstock here is not diffuse — it's a near-total condition (99% of inventory value) with a specific, directly-measured mechanism (MOQ flooring, $12.67B of overshoot) and a moderately concentrated distribution (30.6% of products driving 80% of excess). MOQ policy reform, targeted first at the top ~150 products, is the highest-leverage intervention identified so far.
+**Capital recapture (retrospective, not a forecast):** capping MOQ enforcement at 2× target would have avoided ~$8.36B of this overshoot. Superseded by a more complete diagnosis in `07` — see below.
 
 ---
 
 # 📊 ABC Analysis — Completed (`06_abc_analysis.ipynb`)
 
-Products classified by **annual COGS** ("annual dollar usage" — the standard inventory-management ABC metric, kept consistent with every prior notebook's inventory-investment lens rather than a revenue lens), then cross-tabulated against the excess-value tiers from `05_overstock_analysis.ipynb` (same generic cumulative-threshold method, applied to a second metric) into a priority matrix. Implemented in `src/abc_analysis.py`. Products with zero recorded sales (4 products) are explicitly retained and forced into class C rather than silently dropped.
-
-```text
-A: cumulative share of annual COGS up to 80%
-B: cumulative share from 80% to 95%
-C: cumulative share from 95% to 100%
-```
-
-### ABC Distribution
+Products classified by **annual COGS** (standard inventory-management ABC metric), cross-tabulated against excess-value tiers from `05` into a priority matrix. Implemented in `src/abc_analysis.py`.
 
 ```text
 Class A:  51 products (10.2%) → 79.4% of annual COGS
 Class B: 105 products (21.0%) → 15.6% of annual COGS
 Class C: 344 products (68.8%) →  5.0% of annual COGS
+
+Excess tier: High 152 | Medium 132 | Low 216
+(matches 05's independent 153-product finding almost exactly — cross-notebook
+ consistency check confirmed)
 ```
-
-A close match to the classic "~20% of products drive ~80% of value" Pareto pattern, slightly more concentrated on the A side.
-
-### Excess-Value Tier Distribution
-
-```text
-High: 152 products | Medium: 132 | Low: 216
-```
-
-The High count (152) matches `05_overstock_analysis.ipynb`'s independently-computed 153-product concentration almost exactly (a one-product difference from floating-point rounding at the 80% boundary) — a strong cross-notebook consistency check.
 
 ### Priority Matrix — the Key Finding
 
@@ -702,29 +689,69 @@ B              46    53      6
 C              57    77    210
 ```
 
-**96% of Class A products (49 of 51) fall in the High excess tier.** Excess inventory is not concentrated in cheap, unimportant products — it is concentrated overwhelmingly in the products this business depends on most, a direct consequence of the MOQ mechanism: high-COGS products are typically fast-moving, and fast-moving products are exactly the ones that trigger frequent MOQ-floored reorders (`03`, `05`).
-
-* **"C × High" (57 products)** — classic dead weight: low importance, high excess. Cheapest, easiest wins.
-* **"A × High" (49 products)** — urgent, requires individual review rather than a blanket fix: e.g. PROD0132 (Laundry), PROD0054 (Computer Accessories), PROD0189 (Furniture Accessories), each averaging $200M+ in tied-up excess while remaining genuinely important, high-COGS products.
-* **"C × Low" (210 products, the largest single cell)** — the healthy story hiding in the data: most low-value products correctly carry low excess. The overstock problem, while affecting 99%+ of total *value* (03, 05), is concentrated in specific *products* (mostly Class A and the 57 Class-C offenders), not universal across the catalog. (High/Medium/Low here are *relative* rankings across products, distinct from — but consistent with — the *absolute* 89.95–99.04% excess-value share found in 03/05.)
-
-**Recommended action sequence:** (1) C×High — MOQ renegotiation/discontinuation, lowest risk; (2) A×High — individual review, likely still needs MOQ reform but with care given business importance; (3) B×High/Medium — second-wave cleanup; (4) Low tier — no action needed.
+**96% of Class A products (49 of 51) fall in the High excess tier.** Excess inventory is concentrated overwhelmingly in the products this business depends on most, not in cheap, unimportant stock — a direct consequence of the MOQ mechanism: high-COGS products are typically fast-moving, and fast-moving products are exactly the ones that trigger frequent MOQ-floored reorders. "C × High" (57 products) is the classic dead-weight segment; "C × Low" (210 products, the largest cell) shows most low-value products are correctly healthy — the problem is concentrated, not universal.
 
 ---
 
-# 🔎 Business Analysis — Answered So Far
+# 🔁 Replenishment Analysis — Completed, Project Capstone (`07_replenishment_analysis.ipynb`)
 
-**Inventory Availability** — *Answered (04):* real stockouts are zero; latent risk is concentrated in fast-moving, internationally-supplied products, fragile to 2–3×+ demand shocks.
+Measures the deepest root cause found in this project, and synthesizes every prior notebook into one actionable deliverable. Implemented in `src/replenishment_analysis.py`.
 
-**Excess Inventory** — *Answered (03, 05, 06):* 99.04% of inventory value is excess above policy target; concentrated in ~31% of products (153 of 500) driving 80% of excess value; root cause is MOQ flooring, measured at $12.67B in order-time overshoot; 96% of the business's most important products (Class A) are also its most excess-heavy.
+### Root Cause Identified (Stage 3 of 3 — the deepest, most complete diagnosis)
 
-**Product Analysis** — *Answered (05, 06):* worst overstock offenders identified by name; full ABC × excess-tier segmentation complete with a recommended action sequence by segment.
+The actual order logic in `generate_fact_inventory()` sets `planned_order_quantity = target_stock_level` (MOQ-floored) on every review date **without netting against existing on-hand stock first** — it re-orders the full target amount on top of whatever is already there, every cycle, rather than ordering only the shortfall (`target_stock_level − inventory_position`). This is strictly more complete than the MOQ-only measurement in `05`, since it also catches orders placed when stock already met or exceeded target — cases the MOQ-only view could not see.
 
-**Store Analysis** — *Partially answered:* turnover and excess both vary meaningfully by store type/region (03, 05); store-to-store transfer recommendations still pending.
+```text
+Total replenishment orders: 730,069
+Orders where existing stock already met/exceeded target
+(should not have been placed at all): 719,348 (98.5%)
+
+Total netting overshoot value: $25.30B — exactly 2.00x the MOQ-only ($12.67B) figure
+```
+
+**Limitation stated plainly:** `opening_stock` is used as the inventory-position proxy, since the model does not separately track outstanding in-transit orders as a pipeline field.
+
+### The Replenishment Action List — the Project's Final Deliverable
+
+One recommendation per product-store combination, synthesizing real stockout risk (`04`), ABC importance (`06`), and excess intensity (`05` methodology at combo grain):
+
+```text
+low_stock_pct > 0 AND ABC class A  → EXPEDITE
+low_stock_pct > 0 (any class)       → MAINTAIN (real risk exists; never suppress)
+excess tier == High                 → SUPPRESS
+excess tier == Medium                → REDUCE
+otherwise                            → MAINTAIN
+```
+
+```text
+MAINTAIN: 5,779 (57.8%) | SUPPRESS: 1,901 (19.0%) | REDUCE: 1,738 (17.4%) | EXPEDITE: 582 (5.8%)
+```
+
+**Retrospective recapture (risk-aware, not a forecast):** SUPPRESS + REDUCE combinations carry **$14.60B** of the measured netting overshoot — larger than `05`'s $8.36B estimate, since it is grounded in the more complete diagnosis. MAINTAIN + EXPEDITE combinations still carry **$10.70B** of overshoot between them, deliberately left untouched: the action rules never suppress a combination with real stockout-risk signal, prioritizing safety over capital efficiency even where retrospective math shows tied-up capital.
+
+**Notable cross-notebook finding:** PROD0132 — this project's #1 worst overstock offender by value (`05`) — also appears repeatedly on the EXPEDITE list across multiple stores (`07`). Not a contradiction: a high-volume, important product can be badly overstocked in aggregate while still carrying genuine, store-specific stockout risk from uneven replenishment timing. Deserves individual operational review.
+
+**Deliverable saved:** `data/processed/replenishment_action_list.csv` — 10,000 rows, ready for a planner or system to act on directly.
+
+### Project Capstone Statement
+
+This project set out to answer whether GulfMart has the right products, in the right quantities, at the right stores, at the right time. The fully evidenced answer: largely no — the system is severely overstocked, not understocked, for a specific, structural, and fixable reason (replenishment orders do not net against existing inventory position — 98.5% of orders were placed unnecessarily — compounded further by MOQ flooring), concentrated disproportionately in the business's own most important products, with a small, specific, and named set of genuinely at-risk combinations correctly protected from any capital-efficiency cut. Every number traces back to a named, measured mechanism.
+
+---
+
+# 🔎 Business Analysis — Answered
+
+**Inventory Availability** — *Answered (04):* real stockouts are zero; latent risk concentrated in fast-moving, internationally-supplied products.
+
+**Excess Inventory** — *Answered (03, 05, 06, 07):* 99.04% of inventory value excess; root cause fully diagnosed to a structural policy flaw (no inventory-position netting, 98.5% of orders unnecessary, $25.30B measured overshoot); 96% of the business's most important products are also its most excess-heavy.
+
+**Product Analysis** — *Answered (05, 06, 07):* worst offenders identified by name; full ABC × excess-tier segmentation; final per-product-store action recommendations.
+
+**Store Analysis** — *Partially answered:* turnover/excess vary meaningfully by store type/region (03, 05); explicit store-to-store transfer recommendations remain a natural extension, not yet built.
 
 **Supplier Analysis** — *Answered (04):* International (long lead-time) suppliers show a 500× higher low-stock rate than Local suppliers.
 
-**Replenishment** — *Pending `07_replenishment_analysis.ipynb`:* reorder prioritization and safety-stock recommendations, sequenced by the ABC × excess-tier segments identified in `06`.
+**Replenishment** — *Answered (07):* concrete SUPPRESS/REDUCE/MAINTAIN/EXPEDITE recommendations for all 10,000 product-store combinations, saved as a real deliverable file.
 
 ---
 
@@ -751,9 +778,9 @@ C              57    77    210
 
 # 🔄 Hybrid Analytics Architecture
 
-**Python** — synthetic data generation, profiling, cleaning, complex transformations, statistical/demand/inventory modeling.
-**SQL Server** — structured storage, validation, joins, KPI calculations, reusable views, analytical queries.
-**Power BI** — KPI dashboards, inventory health monitoring, store/product analysis, stockout visualization, management reporting.
+**Python** — synthetic data generation, profiling, cleaning, complex transformations, statistical/demand/inventory modeling. *Complete.*
+**SQL Server** — structured storage, validation, joins, KPI calculations, reusable views, analytical queries. *Next phase.*
+**Power BI** — KPI dashboards, inventory health monitoring, store/product analysis, stockout visualization, management reporting. *Next phase.*
 
 ---
 
@@ -786,14 +813,17 @@ Fix magnitude-aware KPI display formatting (turnover/GMROI no longer round to 0.
 Add stockout_analysis.py and 04_stockout_analysis.ipynb — confirms zero true stockouts, quantifies latent risk
 Add overstock_analysis.py and 05_overstock_analysis.ipynb — quantifies 99%+ excess inventory, measures MOQ attribution
 Add abc_analysis.py and 06_abc_analysis.ipynb — ABC x excess-tier priority matrix, finds 96% of Class A is high-excess
+Fix summarize_excess_by() to support multi-column grain
+Add replenishment_analysis.py and 07_replenishment_analysis.ipynb — netting root cause (2x MOQ, 98.5% unnecessary orders), final action list ($14.6B recoverable)
 ```
 
 ### Current Development Milestone
 
 ```text
-07_replenishment_analysis.ipynb — turn the ABC x excess-tier
-segmentation (06) into concrete, prioritized reorder-policy
-recommendations
+Python analytical arc complete (notebooks 01-07). Moving to SQL Server
+implementation: migrate the star schema and rebuild core KPI /
+stockout / overstock / replenishment queries in SQL, backed by the
+same validated, cleaned dataset.
 ```
 
 ---
@@ -840,23 +870,23 @@ recommendations
 * [x] `downcast_dtypes()` utility (`src/utils.py`) — applied at save time and at analysis-load time
 * [x] `01_data_profiling.ipynb` — full profiling of all 7 tables, validation checkpoint
 * [x] `02_data_cleaning.ipynb` — resolves all planted data-quality issues, re-validates clean (15 PASS / 0 FAIL / 2 REVIEW)
-* [x] `03_inventory_kpis.ipynb` — overall/product/store KPIs; identifies systemic overstock (turnover 0.0035, GMROI 0.0044, 99.2% of products excess inventory) with MOQ-vs-demand mismatch as root cause
-* [x] `04_stockout_analysis.ipynb` — confirms zero true stockouts; identifies fast-moving + long-lead-time products as the real (currently latent) risk concentration; demand-spike stress test shows real fragility at 3×+ demand; safety-stock cuts shown structurally irrelevant
-* [x] `05_overstock_analysis.ipynb` — quantifies excess against the model's own `target_stock_level` policy (99.04% of inventory value is excess); measures MOQ attribution directly (50.4% of replenishment orders inflated, $12.67B overshoot); retrospective capital-recapture estimate (~$8.36B at a 2× MOQ cap); 153 of 500 products (30.6%) drive 80% of excess value
-* [x] `06_abc_analysis.ipynb` — COGS-based ABC classification (A: 51 products/79.4% of COGS) cross-tabulated with excess-value tiers into a priority matrix; finds 96% of Class A products (49 of 51) carry high excess, reframing overstock as concentrated in the business's most important products, not just cheap dead stock
+* [x] `03_inventory_kpis.ipynb` — overall/product/store KPIs; identifies systemic overstock (turnover 0.0035, GMROI 0.0044) with MOQ-vs-demand mismatch as root cause
+* [x] `04_stockout_analysis.ipynb` — confirms zero true stockouts; identifies fast-moving + long-lead-time products as the real latent risk; demand-spike stress test; safety-stock cuts shown structurally irrelevant
+* [x] `05_overstock_analysis.ipynb` — quantifies excess against `target_stock_level` (99.04% excess); measures MOQ attribution directly ($12.67B overshoot); retrospective capital-recapture estimate (~$8.36B at 2× MOQ cap)
+* [x] `06_abc_analysis.ipynb` — COGS-based ABC (A: 51 products/79.4% of COGS) cross-tabulated with excess-value tiers; finds 96% of Class A products carry high excess
+* [x] Fixed `summarize_excess_by()` to support multi-column grain
+* [x] `07_replenishment_analysis.ipynb` — deepest root cause (inventory-position netting flaw, 98.5% of orders unnecessary, $25.30B overshoot, 2.00x the MOQ-only figure); final Replenishment Action List (10,000 combos, $14.60B risk-aware recoverable value); saved as `data/processed/replenishment_action_list.csv`
 
 ## In Progress
 
-* [ ] `07_replenishment_analysis.ipynb`
+* [ ] SQL Server implementation (`sql/01_create_database.sql` onward)
 
 ## Planned
 
 * [ ] Inventory aging
-* [ ] Store/product diagnosis
-* [ ] Root-cause analysis
-* [ ] SQL Server implementation
+* [ ] Store/product diagnosis (store-to-store transfer recommendations)
 * [ ] Power BI dashboard
-* [ ] Business recommendations
+* [ ] Business recommendations (`docs/business_recommendations.md`)
 * [ ] Final portfolio documentation
 
 ---
@@ -896,10 +926,16 @@ Overstock Analysis (05_overstock_analysis.ipynb) ✓
      ↓
 ABC Analysis (06_abc_analysis.ipynb) ✓
      ↓
-Replenishment Analysis (07_replenishment_analysis.ipynb)  ← current
+Replenishment Analysis (07_replenishment_analysis.ipynb) ✓
+     ↓
+SQL Server Implementation  ← current
+     ↓
+Power BI Dashboard
+     ↓
+Business Recommendations
 ```
 
-The entire Python data-generation phase is complete: dimensions, facts, demand calibration, replenishment logic, validation, and persistence. Data profiling and cleaning are complete, producing a validated, trustworthy dataset (15 PASS / 0 FAIL / 2 REVIEW). The core analytical arc is now complete: KPIs established systemic overstock as the dominant finding; stockout analysis confirmed zero true stockouts while identifying real latent risk; overstock analysis quantified the problem precisely (99.04% of inventory value excess, $12.67B in measured MOQ overshoot); ABC analysis segmented the catalog and revealed that 96% of the business's most important products are also its most excess-heavy. The project now moves into **replenishment analysis**, turning this segmentation into concrete, prioritized policy recommendations.
+**The entire Python data-generation and analytical phase of this project is now complete.** Dimensions, facts, demand calibration, replenishment logic, validation, persistence, profiling, cleaning, and all seven analysis notebooks are done, cross-validated against each other, and documented — including every bug found and fixed along the way. The analytical arc traced a single root cause through three levels of depth: symptom (near-zero turnover) → sizing mechanism (MOQ flooring, $12.67B) → structural policy flaw (no inventory-position netting, $25.30B, 98.5% of orders unnecessary) — and closed with a concrete, saved deliverable (`replenishment_action_list.csv`) rather than stopping at description. The project now moves into **SQL Server implementation**, rebuilding the core queries behind these findings in T-SQL against the same validated dataset, followed by a Power BI dashboard and a formal business-recommendations document.
 
 ---
 
@@ -914,7 +950,7 @@ The goal is not simply to calculate KPIs. The goal is to answer:
 
 > **What is happening? Why is it happening? Which products/stores are affected? What should the retailer do? What business impact could the decision create?**
 
-This project's clearest answer so far: inventory turnover is near-zero (0.0035, ~287-year turn cycle) and 99.04% of inventory value is excess — caused specifically by supplier MOQ flooring (measured at $12.67B in order-time overshoot), concentrated overwhelmingly in the business's own most important products (96% of Class A), not just in cheap dead stock — with a defensible retrospective estimate that capping MOQ enforcement at 2× policy target would have avoided roughly $8.36B of that overshoot, and a concrete, segment-by-segment action sequence for addressing it.
+This project's fullest answer: inventory turnover is near-zero (0.0035, ~287-year turn cycle) and 99.04% of inventory value is excess — caused specifically by a replenishment policy that never nets new orders against existing stock (98.5% of the 730,069 historical orders should not have been placed at all, $25.30B in measured overshoot), compounded by supplier MOQ flooring, and concentrated overwhelmingly in the business's own most important products (96% of Class A). The project closes with a concrete, risk-aware, per-product-store action list — $14.60B retrospectively recoverable through SUPPRESS/REDUCE actions alone, with genuinely at-risk combinations correctly protected rather than swept into a blanket cut.
 
 ---
 
@@ -936,4 +972,4 @@ Retail business analysis · Sales analytics · Inventory analytics · Demand ana
 
 > **Can data help a retailer keep the right products available at the right stores, reduce excess inventory, improve inventory efficiency, and protect profitability?**
 
-This project is designed to answer that question — and has, so far, found, precisely quantified, and segmented a severe, mechanistically-explained overstock problem as the primary answer.
+This project answers that question with a fully traced, three-level root-cause diagnosis and a concrete, saved, actionable deliverable — not just a set of KPIs.
