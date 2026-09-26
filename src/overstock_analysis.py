@@ -90,20 +90,16 @@ def compute_excess_value(fact_inventory, dim_product):
 
 
 def summarize_excess_by(fact_inventory_excess, group_column):
-    """
-    Time-averaged excess units/value by a grouping column
-    (e.g. 'product_id', 'store_id', 'category', 'demand_class').
-
-    Time-averaging (average of each day's group total, not a raw sum
-    across all rows) is used so the result represents a realistic
-    "typical amount of capital tied up," not an artifact of how many
-    days are in the period.
-
-    Returns a DataFrame sorted by avg_excess_value, descending.
-    """
+    # group_column may be a single column name (str) or a list of
+    # column names (e.g. ["store_id", "product_id"] for combo-level
+    # grain, used by replenishment_analysis.py). Normalize to a list
+    # internally so both call styles work without duplicating logic.
+    group_columns = (
+        [group_column] if isinstance(group_column, str) else list(group_column)
+    )
 
     daily_totals = (
-        fact_inventory_excess.groupby([group_column, "date"])
+        fact_inventory_excess.groupby(group_columns + ["date"])
         .agg(
             excess_units=("excess_units", "sum"),
             excess_value=("excess_value", "sum"),
@@ -111,7 +107,7 @@ def summarize_excess_by(fact_inventory_excess, group_column):
         .reset_index()
     )
 
-    summary = daily_totals.groupby(group_column).agg(
+    summary = daily_totals.groupby(group_columns).agg(
         avg_excess_units=("excess_units", "mean"),
         avg_excess_value=("excess_value", "mean"),
     )
