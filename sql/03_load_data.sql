@@ -181,6 +181,17 @@ PRINT 'fact_sales populated from staging. Row count:';
 SELECT COUNT(*) AS fact_sales_row_count FROM dbo.fact_sales;
 GO
 
+USE GulfMartRetailAnalytics;
+GO
+
+SELECT 'dim_date' AS table_name, COUNT(*) AS row_count FROM dbo.dim_date
+UNION ALL SELECT 'dim_supplier', COUNT(*) FROM dbo.dim_supplier
+UNION ALL SELECT 'dim_product', COUNT(*) FROM dbo.dim_product
+UNION ALL SELECT 'dim_store', COUNT(*) FROM dbo.dim_store
+UNION ALL SELECT 'dim_customer', COUNT(*) FROM dbo.dim_customer
+UNION ALL SELECT 'fact_sales', COUNT(*) FROM dbo.fact_sales
+UNION ALL SELECT 'fact_inventory', COUNT(*) FROM dbo.fact_inventory;
+
 -- ============================================================
 -- TROUBLESHOOTING: "Access is denied" on BULK INSERT
 -- ============================================================

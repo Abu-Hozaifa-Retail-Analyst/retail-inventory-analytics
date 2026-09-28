@@ -130,7 +130,7 @@ The dataset is intentionally generated with realistic retail relationships rathe
 
 # 🗂️ Data Model
 
-The project uses a dimensional/star-schema-oriented structure.
+The project uses a dimensional/star-schema-oriented structure, implemented identically in both Python (pandas DataFrames) and SQL Server (see "🗄️ SQL Server Implementation" below).
 
 ```text
                     dim_date
@@ -164,12 +164,12 @@ dim_product ─── fact_inventory ─── dim_store
 
 #### Fact Tables
 
-* `fact_sales` — generated, validated, cleaned, and saved to `data/raw/fact_sales.csv` (raw) / `data/cleaned/fact_sales.csv` (cleaned)
-* `fact_inventory` — generated, validated, and saved to `data/raw/fact_inventory.csv.gz` (gzip-compressed, ~10.96M rows); never modified by cleaning (had zero planted issues)
+* `fact_sales` — generated, validated, cleaned, and saved to `data/raw/fact_sales.csv` (raw) / `data/cleaned/fact_sales.csv` (cleaned); loaded into SQL Server
+* `fact_inventory` — generated, validated, and saved to `data/raw/fact_inventory.csv.gz` (gzip-compressed, ~10.96M rows); never modified by cleaning (had zero planted issues); loaded into SQL Server
 
 #### Derived / Analytical Output
 
-* `data/processed/replenishment_action_list.csv` — one row per product-store combination, the project's final actionable deliverable (see `07_replenishment_analysis.ipynb`)
+* `data/processed/replenishment_action_list.csv` — one row per product-store combination, the Python phase's final actionable deliverable (see `07_replenishment_analysis.ipynb`)
 
 ---
 
@@ -203,6 +203,7 @@ retail-inventory-analytics/
 │   ├── overstock_analysis.py
 │   ├── abc_analysis.py
 │   ├── replenishment_analysis.py
+│   ├── sql_loader.py
 │   ├── utils.py
 │   ├── data_generation_config.py
 │   ├── validate_generation_config.py
@@ -693,7 +694,7 @@ C              57    77    210
 
 ---
 
-# 🔁 Replenishment Analysis — Completed, Project Capstone (`07_replenishment_analysis.ipynb`)
+# 🔁 Replenishment Analysis — Completed, Python-Phase Capstone (`07_replenishment_analysis.ipynb`)
 
 Measures the deepest root cause found in this project, and synthesizes every prior notebook into one actionable deliverable. Implemented in `src/replenishment_analysis.py`.
 
@@ -711,7 +712,7 @@ Total netting overshoot value: $25.30B — exactly 2.00x the MOQ-only ($12.67B) 
 
 **Limitation stated plainly:** `opening_stock` is used as the inventory-position proxy, since the model does not separately track outstanding in-transit orders as a pipeline field.
 
-### The Replenishment Action List — the Project's Final Deliverable
+### The Replenishment Action List — the Python Phase's Final Deliverable
 
 One recommendation per product-store combination, synthesizing real stockout risk (`04`), ABC importance (`06`), and excess intensity (`05` methodology at combo grain):
 
@@ -733,9 +734,9 @@ MAINTAIN: 5,779 (57.8%) | SUPPRESS: 1,901 (19.0%) | REDUCE: 1,738 (17.4%) | EXPE
 
 **Deliverable saved:** `data/processed/replenishment_action_list.csv` — 10,000 rows, ready for a planner or system to act on directly.
 
-### Project Capstone Statement
+### Python-Phase Capstone Statement
 
-This project set out to answer whether GulfMart has the right products, in the right quantities, at the right stores, at the right time. The fully evidenced answer: largely no — the system is severely overstocked, not understocked, for a specific, structural, and fixable reason (replenishment orders do not net against existing inventory position — 98.5% of orders were placed unnecessarily — compounded further by MOQ flooring), concentrated disproportionately in the business's own most important products, with a small, specific, and named set of genuinely at-risk combinations correctly protected from any capital-efficiency cut. Every number traces back to a named, measured mechanism.
+Across all seven notebooks, the fully evidenced answer to whether GulfMart has the right products, in the right quantities, at the right stores, at the right time: largely no — the system is severely overstocked, not understocked, for a specific, structural, and fixable reason (replenishment orders do not net against existing inventory position — 98.5% of orders were placed unnecessarily — compounded further by MOQ flooring), concentrated disproportionately in the business's own most important products, with a small, specific, and named set of genuinely at-risk combinations correctly protected from any capital-efficiency cut. Every number traces back to a named, measured mechanism.
 
 ---
 
@@ -755,6 +756,56 @@ This project set out to answer whether GulfMart has the right products, in the r
 
 ---
 
+# 🗄️ SQL Server Implementation — In Progress
+
+The Python phase (generation through `07_replenishment_analysis.ipynb`) is complete and produced a validated, trustworthy dataset. This phase rebuilds the storage layer in SQL Server and, in later scripts, re-expresses the core analytical queries behind the Python findings in T-SQL.
+
+### Schema Design Decisions
+
+**Natural keys, not surrogate keys.** Every table uses the existing VARCHAR business IDs (`product_id`, `store_id`, etc.) directly as primary keys, rather than generating `IDENTITY` integer surrogate keys. The Python pipeline already produces stable, unique, deterministic IDs — the main real-world justification for surrogate keys (protecting against natural keys that change or get reused) doesn't apply here, so the extra ETL complexity of surrogate-key lookups was judged not worth it for this project.
+
+**`fact_sales` uses a staging + transform pattern.** `staging_fact_sales` mirrors the raw 35-column CSV exactly (a clean `BULK INSERT` target); the final `fact_sales` table keeps only true fact-grain keys and measures, dropping demand-modeling intermediates (`base_demand`, `seasonality_factor`, `demand_intensity`, etc.) that were needed to *generate* the data but are redundant for *analyzing* it.
+
+**`fact_inventory` has no staging table** — it is loaded via a Python script (`src/sql_loader.py`), not `BULK INSERT` (see below), so its DDL already defines the final, normalized structure directly. Static-per-combo fields (`lead_time_days`, `minimum_order_qty`, `safety_stock_days`, `replenishment_interval_days`) are intentionally kept directly on the fact table, matching how the Python analysis notebooks already carry them, rather than forcing every downstream query to join through `dim_supplier`.
+
+### Hybrid Loading Strategy
+
+`fact_inventory.csv.gz` is gzip-compressed; SQL Server's `BULK INSERT`/`OPENROWSET` cannot read gzip directly. Rather than decompress and fight file-permission issues on a single ~11GB file, loading is split:
+
+```text
+dim_date, dim_supplier, dim_product, dim_store, dim_customer, fact_sales
+    → T-SQL BULK INSERT (sql/03_load_data.sql)
+fact_inventory (10.96M rows)
+    → Python loader, pyodbc + fast_executemany, chunked (src/sql_loader.py)
+```
+
+Source folders are deliberately mixed, matching the same choice made consistently across every analysis notebook: `dim_date` from `data/raw/` (never touched by cleaning); every other dimension plus `fact_sales` from `data/cleaned/` (imputed placeholders, normalized text, duplicates removed); `fact_inventory` from `data/raw/` (never modified by cleaning — zero planted issues).
+
+### Bugs Found and Fixed During Loading — Documented, Not Silently Patched
+
+* **Boolean columns as text:** pandas writes `bool` columns to CSV as the literal text `True`/`False`, which `BULK INSERT` cannot convert directly into `BIT`. Fixed by staging every boolean column as `VARCHAR(5)` and converting via `CASE WHEN col = 'True' THEN 1 ELSE 0 END` during the staging→final transform — added a dedicated `staging_dim_date` table for this (previously `dim_date` had no staging table at all).
+* **`ROWTERMINATOR` mismatch:** the CSVs use Windows CRLF line endings; the script initially specified `ROWTERMINATOR = '0x0a'` (LF only), leaving a stray `\r` attached to each row's last column. Numeric columns silently tolerated it (trimmed on conversion); `dim_date`'s last column (`is_eid_period`, `VARCHAR(5)`) did not, throwing a `truncation` error that surfaced the bug. Fixed to `'0x0d0a'` across every `BULK INSERT` statement, not just the one that errored — the same silent truncation risk was present in every load.
+* **Duplicate/conflicting INSERT statements:** an editing mistake produced two copies of the `staging_fact_sales → fact_sales` transform, one correct and one missing the boolean conversion; caught via a primary-key-violation error on the second copy and resolved by keeping one corrected copy.
+* **`fast_executemany` and numpy dtypes:** pyodbc's bulk insert path does not reliably handle `numpy.int32`/`float32`/`bool_` scalar types (produced by `downcast_dtypes()`) the way it handles native Python types — `sql_loader.py` explicitly converts every value to native Python types (and `NaN` → `None` → SQL `NULL`) before insert, rather than risk silent type/value errors.
+* **Interrupted load left a partial table:** a re-run of `sql_loader.py` (which truncates before reloading) was interrupted partway through, leaving exactly 4,650,000 rows (93 complete 50,000-row chunks) instead of erroring visibly — caught only by an explicit row-count check after the run reported success from an earlier, complete execution. Reinforces why the loader verifies its own row count on every run rather than trusting "no exception raised" as proof of completeness.
+* **Password handling:** `sql_loader.py` reads the SQL Server password from the `SQL_PASSWORD` environment variable, set per-terminal-session (`$env:SQL_PASSWORD = "..."`), never hardcoded or committed to Git.
+
+### Verified Load — Final Row Counts
+
+```text
+dim_date          1,096
+dim_supplier          30
+dim_product          500
+dim_store              20
+dim_customer        5,000
+fact_sales        125,000
+fact_inventory 10,960,000
+```
+
+All match their expected Python-side counts exactly. `sql_loader.py` sustained ~15,700 rows/sec via chunked `fast_executemany` (50,000 rows/chunk, committed per chunk), completing the full 10.96M-row load in ~11.6 minutes.
+
+---
+
 # 🛠️ Technology Stack
 
 | Technology  | Purpose                              |
@@ -766,6 +817,7 @@ This project set out to answer whether GulfMart has the right products, in the r
 | Seaborn     | Exploratory visualization            |
 | SQL Server  | Data storage & SQL analytics         |
 | SSMS        | Database development                 |
+| pyodbc      | Python → SQL Server bulk loading     |
 | Power BI    | Dashboard & reporting                |
 | DAX         | BI calculations                      |
 | Power Query | Data transformation                  |
@@ -779,7 +831,7 @@ This project set out to answer whether GulfMart has the right products, in the r
 # 🔄 Hybrid Analytics Architecture
 
 **Python** — synthetic data generation, profiling, cleaning, complex transformations, statistical/demand/inventory modeling. *Complete.*
-**SQL Server** — structured storage, validation, joins, KPI calculations, reusable views, analytical queries. *Next phase.*
+**SQL Server** — structured storage (schema + full data load complete), validation, joins, KPI calculations, reusable views, analytical queries. *In progress.*
 **Power BI** — KPI dashboards, inventory health monitoring, store/product analysis, stockout visualization, management reporting. *Next phase.*
 
 ---
@@ -815,15 +867,16 @@ Add overstock_analysis.py and 05_overstock_analysis.ipynb — quantifies 99%+ ex
 Add abc_analysis.py and 06_abc_analysis.ipynb — ABC x excess-tier priority matrix, finds 96% of Class A is high-excess
 Fix summarize_excess_by() to support multi-column grain
 Add replenishment_analysis.py and 07_replenishment_analysis.ipynb — netting root cause (2x MOQ, 98.5% unnecessary orders), final action list ($14.6B recoverable)
+SQL Server: create database, star-schema tables (natural keys), BULK INSERT load for dims + fact_sales
+Add sql_loader.py: pyodbc chunked loader for fact_inventory (10.96M rows, fast_executemany)
 ```
 
 ### Current Development Milestone
 
 ```text
-Python analytical arc complete (notebooks 01-07). Moving to SQL Server
-implementation: migrate the star schema and rebuild core KPI /
-stockout / overstock / replenishment queries in SQL, backed by the
-same validated, cleaned dataset.
+sql/04_data_validation.sql — re-express the Python-side
+validate_generated_dataset() checks (structural, financial,
+inventory-policy) as T-SQL queries against the live database
 ```
 
 ---
@@ -876,13 +929,21 @@ same validated, cleaned dataset.
 * [x] `06_abc_analysis.ipynb` — COGS-based ABC (A: 51 products/79.4% of COGS) cross-tabulated with excess-value tiers; finds 96% of Class A products carry high excess
 * [x] Fixed `summarize_excess_by()` to support multi-column grain
 * [x] `07_replenishment_analysis.ipynb` — deepest root cause (inventory-position netting flaw, 98.5% of orders unnecessary, $25.30B overshoot, 2.00x the MOQ-only figure); final Replenishment Action List (10,000 combos, $14.60B risk-aware recoverable value); saved as `data/processed/replenishment_action_list.csv`
+* [x] `sql/01_create_database.sql` — SQL Server database created
+* [x] `sql/02_create_tables.sql` — star-schema tables, natural keys, staging tables for boolean-as-text columns
+* [x] `sql/03_load_data.sql` — BULK INSERT load for dims + fact_sales (1,096 / 30 / 500 / 20 / 5,000 / 125,000 rows, all verified)
+* [x] `src/sql_loader.py` — pyodbc chunked loader for `fact_inventory` (10,960,000 rows verified, ~15,700 rows/sec)
 
 ## In Progress
 
-* [ ] SQL Server implementation (`sql/01_create_database.sql` onward)
+* [ ] `sql/04_data_validation.sql`
 
 ## Planned
 
+* [ ] `sql/05_inventory_kpis.sql`
+* [ ] `sql/06_stockout_analysis.sql`
+* [ ] `sql/07_overstock_analysis.sql`
+* [ ] `sql/08_replenishment_analysis.sql`
 * [ ] Inventory aging
 * [ ] Store/product diagnosis (store-to-store transfer recommendations)
 * [ ] Power BI dashboard
@@ -928,14 +989,18 @@ ABC Analysis (06_abc_analysis.ipynb) ✓
      ↓
 Replenishment Analysis (07_replenishment_analysis.ipynb) ✓
      ↓
-SQL Server Implementation  ← current
+SQL Server: Database + Tables + Data Load ✓
+     ↓
+SQL Server: Data Validation (sql/04_data_validation.sql)  ← current
+     ↓
+SQL Server: KPIs, Stockout, Overstock, Replenishment Queries (sql/05-08)
      ↓
 Power BI Dashboard
      ↓
 Business Recommendations
 ```
 
-**The entire Python data-generation and analytical phase of this project is now complete.** Dimensions, facts, demand calibration, replenishment logic, validation, persistence, profiling, cleaning, and all seven analysis notebooks are done, cross-validated against each other, and documented — including every bug found and fixed along the way. The analytical arc traced a single root cause through three levels of depth: symptom (near-zero turnover) → sizing mechanism (MOQ flooring, $12.67B) → structural policy flaw (no inventory-position netting, $25.30B, 98.5% of orders unnecessary) — and closed with a concrete, saved deliverable (`replenishment_action_list.csv`) rather than stopping at description. The project now moves into **SQL Server implementation**, rebuilding the core queries behind these findings in T-SQL against the same validated dataset, followed by a Power BI dashboard and a formal business-recommendations document.
+**The entire Python data-generation and analytical phase of this project is complete.** SQL Server implementation is now underway: database, star-schema tables (natural keys, staging pattern for boolean/text CSV quirks), and the full data load (all 7 tables, 10.96M-row `fact_inventory` via a custom pyodbc loader) are done and verified. Several real loading bugs were found and fixed along the way — CRLF row-terminator mismatches, boolean-as-text CSV values, a duplicate INSERT statement, and an interrupted load silently leaving a partial table — each documented here rather than silently patched. The project now moves into SQL-side data validation, followed by rebuilding the core KPI/stockout/overstock/replenishment queries in T-SQL against the same dataset already fully diagnosed in Python.
 
 ---
 
@@ -950,7 +1015,7 @@ The goal is not simply to calculate KPIs. The goal is to answer:
 
 > **What is happening? Why is it happening? Which products/stores are affected? What should the retailer do? What business impact could the decision create?**
 
-This project's fullest answer: inventory turnover is near-zero (0.0035, ~287-year turn cycle) and 99.04% of inventory value is excess — caused specifically by a replenishment policy that never nets new orders against existing stock (98.5% of the 730,069 historical orders should not have been placed at all, $25.30B in measured overshoot), compounded by supplier MOQ flooring, and concentrated overwhelmingly in the business's own most important products (96% of Class A). The project closes with a concrete, risk-aware, per-product-store action list — $14.60B retrospectively recoverable through SUPPRESS/REDUCE actions alone, with genuinely at-risk combinations correctly protected rather than swept into a blanket cut.
+This project's fullest answer: inventory turnover is near-zero (0.0035, ~287-year turn cycle) and 99.04% of inventory value is excess — caused specifically by a replenishment policy that never nets new orders against existing stock (98.5% of the 730,069 historical orders should not have been placed at all, $25.30B in measured overshoot), compounded by supplier MOQ flooring, and concentrated overwhelmingly in the business's own most important products (96% of Class A). The project closes its Python phase with a concrete, risk-aware, per-product-store action list — $14.60B retrospectively recoverable through SUPPRESS/REDUCE actions alone — and is now moving this same diagnosis into SQL Server so it can be queried, joined, and eventually surfaced in a live Power BI dashboard.
 
 ---
 
@@ -972,4 +1037,4 @@ Retail business analysis · Sales analytics · Inventory analytics · Demand ana
 
 > **Can data help a retailer keep the right products available at the right stores, reduce excess inventory, improve inventory efficiency, and protect profitability?**
 
-This project answers that question with a fully traced, three-level root-cause diagnosis and a concrete, saved, actionable deliverable — not just a set of KPIs.
+This project answers that question with a fully traced, three-level root-cause diagnosis and a concrete, saved, actionable deliverable — not just a set of KPIs — and is now being carried into SQL Server and Power BI to demonstrate the same analysis in a production-style stack.
