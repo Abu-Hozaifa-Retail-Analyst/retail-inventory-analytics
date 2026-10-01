@@ -16,6 +16,17 @@
 -- normalized table with only true fact-grain measures and keys,
 -- populated from staging via 03_load_data.sql.
 --
+-- is_ramadan / is_eid_period are kept on fact_sales despite being
+-- "demand-modeling adjacent" -- unlike base_demand/seasonality_factor,
+-- they are genuine business facts ("was this sale made during
+-- Ramadan"), not synthetic-generation scaffolding, and are needed by
+-- 04_data_validation.sql's business-behavior checks. NOTE:
+-- dim_date.is_ramadan/is_eid_period are permanently FALSE for every
+-- row -- a pre-existing quirk inherited from the Python generator
+-- (generate_dim_date() hardcodes them to False; the real
+-- determination only ever happened inline in generate_fact_sales()).
+-- fact_sales carries the real per-transaction values instead.
+--
 -- fact_inventory has no staging table: it is loaded via a Python
 -- script (not BULK INSERT, see README), which selects and types
 -- its columns in pandas before insert, so this DDL already defines
@@ -24,8 +35,6 @@
 
 USE GulfMartRetailAnalytics;
 GO
-
-
 
 -- ============================================================
 -- Drop existing tables (idempotent re-run during development)
@@ -60,7 +69,7 @@ CREATE TABLE dbo.staging_dim_date (
     [day]         TINYINT     NOT NULL,
     day_name      VARCHAR(10) NOT NULL,
     day_of_week   TINYINT     NOT NULL,
-    is_weekend    VARCHAR(5)  NOT NULL,   -- 'True'/'False' text, converted on load
+    is_weekend    VARCHAR(5)  NOT NULL,
     season        VARCHAR(10) NOT NULL,
     is_ramadan    VARCHAR(5)  NOT NULL,
     is_eid_period VARCHAR(5)  NOT NULL
@@ -90,7 +99,7 @@ GO
 
 CREATE TABLE dbo.dim_supplier (
     supplier_id       VARCHAR(10) NOT NULL PRIMARY KEY,
-    supplier_name     VARCHAR(50) NULL,   -- nullable: may be an imputed placeholder from 02_data_cleaning.ipynb
+    supplier_name     VARCHAR(50) NULL,
     supplier_region   VARCHAR(20) NOT NULL,
     lead_time_days    SMALLINT    NOT NULL,
     minimum_order_qty INT         NOT NULL,
@@ -103,7 +112,7 @@ CREATE TABLE dbo.dim_product (
     product_name        VARCHAR(100)  NOT NULL,
     category             VARCHAR(30)   NOT NULL,
     subcategory          VARCHAR(30)   NOT NULL,
-    brand                 VARCHAR(30)   NULL,   -- nullable: may be missing (not imputed -- dim_product had no planted issue requiring it)
+    brand                 VARCHAR(30)   NULL,
     supplier_id           VARCHAR(10)   NOT NULL,
     unit_cost              DECIMAL(10,2) NOT NULL,
     selling_price           DECIMAL(10,2) NOT NULL,
@@ -136,7 +145,7 @@ CREATE TABLE dbo.dim_customer (
     customer_segment            VARCHAR(20)  NOT NULL,
     gender                        VARCHAR(10)  NOT NULL,
     age_group                      VARCHAR(10)  NOT NULL,
-    city                             VARCHAR(30)  NULL,  -- nullable: may be an imputed placeholder
+    city                             VARCHAR(30)  NULL,
     customer_start_date                DATE         NOT NULL,
     customer_tenure_days                 INT          NOT NULL,
     preferred_channel                      VARCHAR(20)  NOT NULL,
@@ -190,12 +199,8 @@ CREATE TABLE dbo.staging_fact_sales (
 GO
 
 -- ============================================================
--- FINAL FACT TABLE — fact_sales (normalized: keys + measures only)
--- Populated from staging_fact_sales in 03_load_data.sql.
--- Demand-modeling intermediates (base_demand, seasonality_factor,
--- demand_intensity, etc.) are dropped here -- they were needed to
--- GENERATE the data, not to analyze it, and are redundant with
--- attributes already stored once in dim_product/dim_store.
+-- FINAL FACT TABLE — fact_sales (normalized: keys + measures,
+-- plus is_ramadan/is_eid_period -- see header note)
 -- ============================================================
 
 CREATE TABLE dbo.fact_sales (
@@ -214,6 +219,8 @@ CREATE TABLE dbo.fact_sales (
     gross_profit      DECIMAL(12,2) NOT NULL,
     is_promotion      BIT           NOT NULL,
     demand_spike      BIT           NOT NULL,
+    is_ramadan        BIT           NOT NULL,
+    is_eid_period     BIT           NOT NULL,
     CONSTRAINT FK_fact_sales_date FOREIGN KEY (transaction_date)
         REFERENCES dbo.dim_date ([date]),
     CONSTRAINT FK_fact_sales_product FOREIGN KEY (product_id)
@@ -233,18 +240,8 @@ GO
 -- ============================================================
 -- FINAL FACT TABLE — fact_inventory
 -- Populated via a Python loader (pyodbc/sqlalchemy), not BULK
--- INSERT -- see 03_load_data notes in the README. Column set is
--- the analytically meaningful subset of the ~46-column pandas
--- table: true inventory-flow components, computed policy fields,
--- and event flags. Static-per-combo fields (lead_time_days,
--- minimum_order_qty, safety_stock_days, replenishment_interval_days)
--- are intentionally retained here despite being available via
--- dim_supplier/dim_product joins in principle -- doing so avoids
--- forcing every downstream inventory-policy query in 05-08 to
--- join through dim_supplier just to reach a value that changes
--- only 30 times across the whole catalog, and matches how the
--- Python analysis notebooks already carry these fields directly
--- on fact_inventory rows.
+-- INSERT -- see README. Static-per-combo fields are intentionally
+-- retained here (see README for reasoning).
 -- ============================================================
 
 CREATE TABLE dbo.fact_inventory (
@@ -272,7 +269,7 @@ CREATE TABLE dbo.fact_inventory (
     inventory_status                                                    VARCHAR(20)   NOT NULL,
     stockout_event                                                        BIT           NOT NULL,
     low_stock_event                                                         BIT           NOT NULL,
-    inventory_coverage_days                                                   DECIMAL(12,4) NULL,  -- nullable: undefined (NaN) when demand_rate = 0
+    inventory_coverage_days                                                   DECIMAL(12,4) NULL,
     CONSTRAINT PK_fact_inventory PRIMARY KEY ([date], store_id, product_id),
     CONSTRAINT FK_fact_inventory_date FOREIGN KEY ([date])
         REFERENCES dbo.dim_date ([date]),
