@@ -760,7 +760,7 @@ Across all seven notebooks, the fully evidenced answer to whether GulfMart has t
 
 # 🗄️ SQL Server Implementation — In Progress
 
-The Python phase (generation through `07_replenishment_analysis.ipynb`) is complete and produced a validated, trustworthy dataset. This phase rebuilds the storage layer in SQL Server and, in later scripts, re-expresses the core analytical queries behind the Python findings in T-SQL.
+The Python phase (generation through `07_replenishment_analysis.ipynb`) is complete and produced a validated, trustworthy dataset. This phase rebuilds the storage layer in SQL Server and re-expresses the core analytical queries behind the Python findings in T-SQL — and, where the schema allows it, genuinely cross-validates them against an entirely independent technology stack.
 
 ### Schema Design Decisions
 
@@ -769,6 +769,8 @@ The Python phase (generation through `07_replenishment_analysis.ipynb`) is compl
 **`fact_sales` uses a staging + transform pattern.** `staging_fact_sales` mirrors the raw 35-column CSV exactly (a clean `BULK INSERT` target); the final `fact_sales` table keeps true fact-grain keys and measures, dropping demand-modeling intermediates (`base_demand`, `seasonality_factor`, `demand_intensity`, etc.) that were needed to *generate* the data but are redundant for *analyzing* it — **with one exception**: `is_ramadan`/`is_eid_period` are kept on `fact_sales`, since they are genuine business facts needed for business-behavior validation, not generation scaffolding (see "Bugs Found" below).
 
 **`fact_inventory` has no staging table** — it is loaded via a Python script (`src/sql_loader.py`), not `BULK INSERT` (see below), so its DDL already defines the final, normalized structure directly. Static-per-combo fields (`lead_time_days`, `minimum_order_qty`, `safety_stock_days`, `replenishment_interval_days`) are intentionally kept directly on the fact table, matching how the Python analysis notebooks already carry them, rather than forcing every downstream query to join through `dim_supplier`.
+
+**⚠️ `02_create_tables.sql` is destructive to `fact_inventory`.** Running the full script `DROP`s and recreates every table, including `fact_inventory` — which is never reloaded by any `.sql` script, only by the ~11-12 minute `src/sql_loader.py`. This caused two real incidents during development (see "Bugs Found"); the script now carries an explicit warning comment at the top, and the practical rule going forward is: never run the whole file just to change one dimension table's DDL — copy out just that `CREATE TABLE` block instead.
 
 ### Hybrid Loading Strategy
 
@@ -786,11 +788,11 @@ Source folders are deliberately mixed, matching the same choice made consistentl
 ### Bugs Found and Fixed During Loading — Documented, Not Silently Patched
 
 * **Boolean columns as text:** pandas writes `bool` columns to CSV as the literal text `True`/`False`, which `BULK INSERT` cannot convert directly into `BIT`. Fixed by staging every boolean column as `VARCHAR(5)` and converting via `CASE WHEN col = 'True' THEN 1 ELSE 0 END` during the staging→final transform — added a dedicated `staging_dim_date` table for this.
-* **`ROWTERMINATOR` mismatch:** the CSVs use Windows CRLF line endings; the script initially specified `ROWTERMINATOR = '0x0a'` (LF only), leaving a stray `\r` attached to each row's last column. Numeric columns silently tolerated it; `dim_date`'s last column (`VARCHAR(5)`) did not, throwing a `truncation` error that surfaced the bug. Fixed to `'0x0d0a'` across every `BULK INSERT` statement, not just the one that errored — the same silent truncation risk was present in every load.
+* **`ROWTERMINATOR` mismatch:** the CSVs use Windows CRLF line endings; the script initially specified `ROWTERMINATOR = '0x0a'` (LF only), leaving a stray `\r` attached to each row's last column. Numeric columns silently tolerated it; `dim_date`'s last column (`VARCHAR(5)`) did not, throwing a `truncation` error that surfaced the bug. Fixed to `'0x0d0a'` across every `BULK INSERT` statement, not just the one that errored.
 * **Duplicate/conflicting INSERT statements:** an editing mistake produced two copies of the `staging_fact_sales → fact_sales` transform, one correct and one missing the boolean conversion; caught via a primary-key-violation error and resolved by keeping one corrected copy.
-* **`fact_sales` missing `is_ramadan`/`is_eid_period`:** initially classified (incorrectly) as generation-only intermediates and dropped from the final table, same as `base_demand`/`seasonality_factor`. This surfaced only when `04_data_validation.sql`'s Ramadan/Eid business-behavior checks returned blank `NULL` averages — traced to the fact that `dim_date.is_ramadan`/`is_eid_period` are *permanently `False`* in the Python generator (a pre-existing quirk: `generate_dim_date()` hardcodes them; the real determination only ever happens inline in `generate_fact_sales()`). Fixed by adding the columns to `fact_sales`, backfilling from `staging_fact_sales` (which still held the real values), and updating both validation and DDL/load scripts.
+* **`fact_sales` missing `is_ramadan`/`is_eid_period`:** initially classified (incorrectly) as generation-only intermediates and dropped from the final table. Surfaced when `04_data_validation.sql`'s Ramadan/Eid checks returned blank `NULL` averages — traced to `dim_date.is_ramadan`/`is_eid_period` being permanently `False` in the Python generator. Fixed by adding the columns to `fact_sales`, backfilling from `staging_fact_sales`, and updating validation/DDL/load scripts.
 * **`fast_executemany` and numpy dtypes:** pyodbc's bulk insert path does not reliably handle `numpy.int32`/`float32`/`bool_` scalar types (produced by `downcast_dtypes()`) — `sql_loader.py` explicitly converts every value to native Python types (and `NaN` → `None` → SQL `NULL`) before insert.
-* **Interrupted/re-run load left a partial table:** a re-run of `sql_loader.py` (truncates before reloading) was interrupted partway through, leaving exactly 4,650,000 rows (93 complete 50,000-row chunks) instead of erroring visibly. Separately, running the full `sql/02_create_tables.sql` (which `DROP`s and recreates every table) after `fact_inventory` was already loaded silently emptied it again, caught only by `04_data_validation.sql`'s row-count check rather than any error. Both incidents reinforce the same lesson: **never trust "no exception raised" as proof of completeness — always verify with an explicit, independent row count**, which is exactly what both `sql_loader.py` and `04_data_validation.sql` now do on every run.
+* **`fact_inventory` silently emptied, twice:** once by an interrupted re-run of `sql_loader.py` (truncates before reloading; stopped partway through, leaving exactly 4,650,000 rows); once by inadvertently re-running the full `02_create_tables.sql` after `fact_inventory` was already loaded. Both were caught only by explicit row-count checks (`04_data_validation.sql`, and divide-by-zero errors in `05_inventory_kpis.sql` when `@PeriodDays` evaluated to 0) rather than any error at the time of the data loss. Reinforces the same lesson twice over: **never trust "no exception raised" as proof of completeness.**
 * **Password handling:** `sql_loader.py` reads the SQL Server password from the `SQL_PASSWORD` environment variable, set per-terminal-session (`$env:SQL_PASSWORD = "..."`), never hardcoded or committed to Git.
 
 ### Verified Load — Final Row Counts
@@ -811,15 +813,44 @@ fact_inventory 10,960,000
 
 **Not a 1:1 port of the Python `validate_generated_dataset()`.** SQL Server's `PRIMARY KEY`/`FOREIGN KEY` constraints already make duplicate keys and orphaned foreign keys physically impossible to load — re-scanning 10.96M rows to re-prove that would be wasted compute. Instead, the script validates what the schema *cannot* auto-guarantee (row counts, constraint existence via the system catalog, financial-formula correctness, business behavior, inventory reconciliation/continuity, inventory-policy formulas), while confirming the schema's own guarantees exist as a separate, cheap check against `INFORMATION_SCHEMA`/`sys.foreign_keys`.
 
-Results accumulate in a table variable and summarize into one `status, check_count` table, mirroring the Python phase's `print_check()` / `FINAL VALIDATION SUMMARY` pattern so both validation layers read consistently.
-
 ```text
 40 PASS / 0 FAIL / 2 INFO
 ```
 
-Low-stock events (33,789) and every financial/reconciliation/continuity/policy check match the Python-side findings exactly — a genuine independent cross-validation: two different technologies (pandas vs. T-SQL), the same 10.96M-row dataset, identical results.
+Low-stock events (33,789) and every financial/reconciliation/continuity/policy check match the Python-side findings exactly.
 
-Inventory-policy formula checks use a combined absolute + relative tolerance (`ABS(a-b) > atol + rtol*|b|`), matching the `np.isclose()` fix already applied in the Python phase — `fact_inventory` was downcast to float32 before being saved to CSV, so a flat absolute tolerance is too strict for larger-magnitude rows. The first run (before this fix) showed 2,192 and 3,288 formula "failures" purely from float32 rounding noise, not a real defect — resolved identically to how the same class of issue was resolved in `data_validation.py`.
+Inventory-policy formula checks use a combined absolute + relative tolerance (`ABS(a-b) > atol + rtol*|b|`), matching the `np.isclose()` fix already applied in the Python phase — `fact_inventory` was downcast to float32 before being saved to CSV, so a flat absolute tolerance is too strict for larger-magnitude rows. The first run (before this fix) showed 2,192 and 3,288 formula "failures" purely from float32 rounding noise — resolved identically to the same class of issue in `data_validation.py`.
+
+### SQL-Side Inventory KPIs (`sql/05_inventory_kpis.sql`)
+
+Direct T-SQL port of `03_inventory_kpis.ipynb` — same three grains (overall, product, store), same formulas, same annualization convention. `beginning_inventory_units` (Python's `initial_opening_stock`, never persisted as its own column) is recovered via `ROW_NUMBER() OVER (PARTITION BY store_id, product_id ORDER BY [date])`, taking each combo's `opening_stock` on its earliest date — exactly how the Python simulation seeded it.
+
+```text
+Inventory Turnover (annualized): 0.003478   (Python: 0.0035)
+GMROI:                            0.004389   (Python: 0.0044)
+Sell-through:                     0.528%     (Python: 0.53%)
+Dead stock combo share:           21.75%     (exact match)
+Excess inventory share:           89.95%     (exact match)
+Store ranking: STORE014/015/016/009/007/019/003/017/005/006/002/018
+  — same relative order as the Python-side ranking
+```
+
+Genuine cross-technology agreement, not just similarity — small decimal differences reflect `DECIMAL` vs. `float64`/downcast-`float32` arithmetic rounding differently at the margins, the same category of expected variance already documented for the tolerance-based checks elsewhere in this project.
+
+### SQL-Side Stockout Analysis (`sql/06_stockout_analysis.sql`)
+
+Direct T-SQL port of `04_stockout_analysis.ipynb` / `src/stockout_analysis.py`. The two what-if stress tests are computed as set-based `CROSS JOIN`s against a small `VALUES` table of factors/cut-percentages (one query per test, every scenario at once) rather than a per-factor loop — idiomatic SQL, same formulas and "retrospective sensitivity, not a forecast" caveat as the Python module's docstrings.
+
+```text
+True stockout events: 0 | Low-stock events: 33,789           (exact match)
+Combinations with ≥1 low-stock day: 2,022 of 10,000           (exact match)
+Fast-moving 0.743% vs Slow-moving 0.000% low-stock rate       (exact match)
+International 1.273% vs Local 0.0025% — ~500x gap             (exact match)
+Demand spike: 0.55/7.41/33.74/58.91/73.14%                    (Python: 0.54/7.42/33.74/58.90/73.14%)
+Safety stock cut: 0/0/0/1 combos across 25/50/75/100% cuts    (exact match)
+```
+
+The single closest-to-the-edge combination, **STORE014 / PROD0367 (Beauty Tools, 6.72 days minimum coverage)**, matches exactly between both implementations — the number that matters most in the near-miss ranking, confirmed independently twice.
 
 ---
 
@@ -848,7 +879,7 @@ Inventory-policy formula checks use a combined absolute + relative tolerance (`A
 # 🔄 Hybrid Analytics Architecture
 
 **Python** — synthetic data generation, profiling, cleaning, complex transformations, statistical/demand/inventory modeling. *Complete.*
-**SQL Server** — structured storage (schema, full data load, and data validation complete), KPI calculations, reusable views, analytical queries. *In progress.*
+**SQL Server** — structured storage, data validation, inventory KPIs, stockout analysis — all complete and cross-validated against Python; overstock and replenishment queries still pending. *In progress.*
 **Power BI** — KPI dashboards, inventory health monitoring, store/product analysis, stockout visualization, management reporting. *Next phase.*
 
 ---
@@ -887,14 +918,15 @@ Add replenishment_analysis.py and 07_replenishment_analysis.ipynb — netting ro
 SQL Server: create database, star-schema tables (natural keys), BULK INSERT load for dims + fact_sales
 Add sql_loader.py: pyodbc chunked loader for fact_inventory (10.96M rows, fast_executemany)
 SQL Server validation (40/40 PASS): fix fact_sales missing is_ramadan/is_eid_period, fix inventory-policy tolerance for float32-downcast data
+Add sql/05_inventory_kpis.sql — cross-validated against 03_inventory_kpis.ipynb; round days_of_inventory; add fact_inventory-wipe warning to 02_create_tables.sql
+Add sql/06_stockout_analysis.sql — cross-validated against 04_stockout_analysis.ipynb (exact match on zero-stockout, 500x lead-time gap, stress-test curves)
 ```
 
 ### Current Development Milestone
 
 ```text
-sql/05_inventory_kpis.sql — re-express 03_inventory_kpis.ipynb's
-overall/product/store KPIs (turnover, GMROI, sell-through, coverage)
-as T-SQL queries against the live database
+sql/07_overstock_analysis.sql — re-express 05_overstock_analysis.ipynb's
+excess-value quantification and MOQ attribution as T-SQL
 ```
 
 ---
@@ -948,19 +980,19 @@ as T-SQL queries against the live database
 * [x] Fixed `summarize_excess_by()` to support multi-column grain
 * [x] `07_replenishment_analysis.ipynb` — deepest root cause (inventory-position netting flaw, 98.5% of orders unnecessary, $25.30B overshoot, 2.00x the MOQ-only figure); final Replenishment Action List (10,000 combos, $14.60B risk-aware recoverable value); saved as `data/processed/replenishment_action_list.csv`
 * [x] `sql/01_create_database.sql` — SQL Server database created
-* [x] `sql/02_create_tables.sql` — star-schema tables, natural keys, staging tables for boolean-as-text columns, `is_ramadan`/`is_eid_period` carried on `fact_sales`
+* [x] `sql/02_create_tables.sql` — star-schema tables, natural keys, staging tables for boolean-as-text columns, `is_ramadan`/`is_eid_period` carried on `fact_sales`, destructive-reload warning added
 * [x] `sql/03_load_data.sql` — BULK INSERT load for dims + fact_sales (1,096 / 30 / 500 / 20 / 5,000 / 125,000 rows, all verified)
 * [x] `src/sql_loader.py` — pyodbc chunked loader for `fact_inventory` (10,960,000 rows verified, ~15,700 rows/sec)
 * [x] `sql/04_data_validation.sql` — 40/40 checks PASS (2 INFO), cross-validates every Python-phase finding independently in T-SQL
+* [x] `sql/05_inventory_kpis.sql` — overall/product/store KPIs, cross-validated against `03_inventory_kpis.ipynb` (turnover, GMROI, dead-stock share, excess share, store ranking all match)
+* [x] `sql/06_stockout_analysis.sql` — near-miss risk analysis + stress tests, cross-validated against `04_stockout_analysis.ipynb` (exact match on zero-stockout count, 500x lead-time gap, stress-test curves, single riskiest combo)
 
 ## In Progress
 
-* [ ] `sql/05_inventory_kpis.sql`
+* [ ] `sql/07_overstock_analysis.sql`
 
 ## Planned
 
-* [ ] `sql/06_stockout_analysis.sql`
-* [ ] `sql/07_overstock_analysis.sql`
 * [ ] `sql/08_replenishment_analysis.sql`
 * [ ] Inventory aging
 * [ ] Store/product diagnosis (store-to-store transfer recommendations)
@@ -1011,16 +1043,20 @@ SQL Server: Database + Tables + Data Load ✓
      ↓
 SQL Server: Data Validation (sql/04_data_validation.sql) ✓ — 40/40 PASS
      ↓
-SQL Server: Inventory KPIs (sql/05_inventory_kpis.sql)  ← current
+SQL Server: Inventory KPIs (sql/05_inventory_kpis.sql) ✓ — cross-validated
      ↓
-SQL Server: Stockout, Overstock, Replenishment Queries (sql/06-08)
+SQL Server: Stockout Analysis (sql/06_stockout_analysis.sql) ✓ — cross-validated
+     ↓
+SQL Server: Overstock Analysis (sql/07_overstock_analysis.sql)  ← current
+     ↓
+SQL Server: Replenishment Queries (sql/08_replenishment_analysis.sql)
      ↓
 Power BI Dashboard
      ↓
 Business Recommendations
 ```
 
-**The entire Python data-generation and analytical phase of this project is complete.** SQL Server implementation now has a fully loaded, fully validated database: all 7 tables verified at their exact expected row counts, and 40 independent T-SQL checks confirming every structural, financial, business-behavior, and inventory-policy property already established in Python — including an exact match on the 33,789 low-stock-event count, a genuine two-technology cross-validation. Two real bugs were found and fixed during this validation pass (a missing `is_ramadan`/`is_eid_period` carry-through on `fact_sales`, and the same float32-tolerance issue already solved once in Python, now ported to T-SQL), both documented rather than silently patched, consistent with this project's approach throughout. The project now moves into rebuilding the core KPI queries in SQL.
+**The entire Python data-generation and analytical phase of this project is complete.** SQL Server implementation now has a fully loaded, fully validated database, with two full analytical layers (KPIs, stockout analysis) rebuilt in T-SQL and cross-validated against their Python counterparts — in several cases to an exact match (33,789 low-stock events, the 500x International/Local lead-time gap, dead-stock/excess-inventory shares, the single riskiest product-store combination). Several real bugs were found and fixed along the way in both the loading and KPI stages, each documented rather than silently patched. The project now moves into rebuilding the overstock-quantification and MOQ-attribution queries in SQL.
 
 ---
 
@@ -1035,7 +1071,7 @@ The goal is not simply to calculate KPIs. The goal is to answer:
 
 > **What is happening? Why is it happening? Which products/stores are affected? What should the retailer do? What business impact could the decision create?**
 
-This project's fullest answer: inventory turnover is near-zero (0.0035, ~287-year turn cycle) and 99.04% of inventory value is excess — caused specifically by a replenishment policy that never nets new orders against existing stock (98.5% of the 730,069 historical orders should not have been placed at all, $25.30B in measured overshoot), compounded by supplier MOQ flooring, and concentrated overwhelmingly in the business's own most important products (96% of Class A). The project closes its Python phase with a concrete, risk-aware, per-product-store action list — $14.60B retrospectively recoverable through SUPPRESS/REDUCE actions alone — and this same diagnosis is now independently confirmed, end to end, in a live SQL Server database (40/40 checks passing), on its way toward a Power BI dashboard.
+This project's fullest answer: inventory turnover is near-zero (0.0035, ~287-year turn cycle) and 99.04% of inventory value is excess — caused specifically by a replenishment policy that never nets new orders against existing stock (98.5% of the 730,069 historical orders should not have been placed at all, $25.30B in measured overshoot), compounded by supplier MOQ flooring, and concentrated overwhelmingly in the business's own most important products (96% of Class A). The project closes its Python phase with a concrete, risk-aware, per-product-store action list — $14.60B retrospectively recoverable through SUPPRESS/REDUCE actions alone — and this same diagnosis is now independently confirmed, end to end, in a live SQL Server database, with multiple exact-match cross-validations between the two technology stacks, on its way toward a Power BI dashboard.
 
 ---
 
@@ -1057,4 +1093,4 @@ Retail business analysis · Sales analytics · Inventory analytics · Demand ana
 
 > **Can data help a retailer keep the right products available at the right stores, reduce excess inventory, improve inventory efficiency, and protect profitability?**
 
-This project answers that question with a fully traced, three-level root-cause diagnosis and a concrete, saved, actionable deliverable — independently cross-validated across two different technology stacks (Python/pandas and SQL Server/T-SQL) — and is now being carried into Power BI to demonstrate the same analysis in a production-style stack.
+This project answers that question with a fully traced, three-level root-cause diagnosis and a concrete, saved, actionable deliverable — independently cross-validated across two different technology stacks (Python/pandas and SQL Server/T-SQL), in several cases to an exact match — and is now being carried into Power BI to demonstrate the same analysis in a production-style stack.
