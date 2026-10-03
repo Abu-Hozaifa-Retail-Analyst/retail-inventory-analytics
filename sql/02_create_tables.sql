@@ -33,6 +33,14 @@
 -- its final, normalized structure directly.
 -- ============================================================
 
+-- ============================================================
+-- ⚠️  WARNING: RUNNING THIS ENTIRE SCRIPT DROPS fact_inventory ⚠️
+-- fact_inventory is NOT reloaded by any .sql script -- only by
+-- src/sql_loader.py (~11-12 minutes). If you only need to change
+-- a dimension or fact_sales column, copy just that CREATE TABLE
+-- block out and run it separately instead of the whole file.
+-- ============================================================
+
 USE GulfMartRetailAnalytics;
 GO
 
