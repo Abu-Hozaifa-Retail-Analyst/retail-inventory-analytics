@@ -631,6 +631,8 @@ Orders inflated above target by MOQ: 368,128 of 730,069 (50.4%)
 Total order-time overshoot value: $12.67B
 ```
 
+Independently cross-validated in T-SQL — see `sql/07_overstock_analysis.sql` in the SQL Server section below.
+
 ---
 
 # 📊 ABC Analysis — Completed (`06_abc_analysis.ipynb`)
@@ -748,7 +750,21 @@ Demand spike: 0.55/7.41/33.74/58.91/73.14% (Python: 0.54/7.42/33.74/58.90/73.14%
 Safety stock cut: 0/0/0/1 combo at 25/50/75/100% cut (exact match)
 ```
 
-Three independent T-SQL scripts in a row (`04`, `05`, `06`) now reproduce the Python phase's findings essentially exactly, on the same 10.96M-row dataset — strong evidence the analysis reflects a real property of the data, not an artifact of one tool's implementation.
+### SQL-Side Overstock Analysis (`sql/07_overstock_analysis.sql`)
+
+Direct T-SQL port of `05_overstock_analysis.ipynb`: row-level excess value against `target_stock_level`, worst-offender rankings (product and store, all 20), category breakdown, Pareto concentration via a window-function running total (`SUM(...) OVER (ORDER BY ... ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)` — the T-SQL equivalent of pandas' `.cumsum()`), MOQ root-cause attribution, and the capital-recapture what-if (same `CROSS JOIN`-against-`VALUES` set-based technique as the stress tests in `06`).
+
+```text
+Excess share: 99.04% (exact match) | Top product: PROD0132, $247.06M avg excess (exact match)
+Top store: STORE015, $698.57M avg excess (exact match)
+Pareto: 153 of 500 products (30.6%) for 80% of excess (exact match)
+MOQ attribution: 50.42% of orders, $12.67B overshoot (exact match)
+Capital recapture at 2x cap: $8.33B (Python: $8.36B)
+```
+
+The strongest cross-validation run of the SQL phase — the top-15 product ranking matches the Python notebook's ranking in the same order, product for product.
+
+Four independent T-SQL scripts in a row (`04`, `05`, `06`, `07`) now reproduce the Python phase's findings essentially exactly, on the same 10.96M-row dataset — strong evidence the analysis reflects a real property of the data, not an artifact of one tool's implementation.
 
 ---
 
@@ -818,13 +834,15 @@ Add sql_loader.py: pyodbc chunked loader for fact_inventory (10.96M rows, fast_e
 SQL Server validation (40/40 PASS): fix fact_sales missing is_ramadan/is_eid_period, fix inventory-policy tolerance for float32-downcast data
 Add sql/05_inventory_kpis.sql — cross-validated against 03_inventory_kpis.ipynb; round days_of_inventory; add fact_inventory-wipe warning to 02_create_tables.sql
 Add sql/06_stockout_analysis.sql — near-miss breakdowns and stress tests, cross-validated against 04_stockout_analysis.ipynb
+Add sql/07_overstock_analysis.sql — excess value, worst offenders, Pareto, MOQ attribution, capital recapture, cross-validated against 05_overstock_analysis.ipynb (near-exact match on every figure)
 ```
 
 ### Current Development Milestone
 
 ```text
-sql/07_overstock_analysis.sql — re-express 05_overstock_analysis.ipynb's
-excess-value quantification and MOQ attribution as T-SQL queries
+sql/08_replenishment_analysis.sql — re-express 07_replenishment_analysis.ipynb's
+deepest root-cause measurement (inventory-position netting) and the final
+Replenishment Action List as T-SQL, closing out the SQL Server phase
 ```
 
 ---
@@ -884,14 +902,14 @@ excess-value quantification and MOQ attribution as T-SQL queries
 * [x] `sql/04_data_validation.sql` — 40/40 checks PASS (2 INFO), cross-validates every Python-phase finding independently in T-SQL
 * [x] `sql/05_inventory_kpis.sql` — cross-validated against `03_inventory_kpis.ipynb` (turnover, GMROI, sell-through, dead stock, excess share all match)
 * [x] `sql/06_stockout_analysis.sql` — cross-validated against `04_stockout_analysis.ipynb` (low-stock exposure, lead-time risk, both stress tests all match)
+* [x] `sql/07_overstock_analysis.sql` — cross-validated against `05_overstock_analysis.ipynb` (excess share, worst offenders, Pareto concentration, MOQ attribution, capital recapture all match)
 
 ## In Progress
 
-* [ ] `sql/07_overstock_analysis.sql`
+* [ ] `sql/08_replenishment_analysis.sql`
 
 ## Planned
 
-* [ ] `sql/08_replenishment_analysis.sql`
 * [ ] Inventory aging
 * [ ] Store/product diagnosis (store-to-store transfer recommendations)
 * [ ] Power BI dashboard
@@ -945,16 +963,16 @@ SQL Server: Inventory KPIs (sql/05_inventory_kpis.sql) ✓ — cross-validated
      ↓
 SQL Server: Stockout Analysis (sql/06_stockout_analysis.sql) ✓ — cross-validated
      ↓
-SQL Server: Overstock Analysis (sql/07_overstock_analysis.sql)  ← current
+SQL Server: Overstock Analysis (sql/07_overstock_analysis.sql) ✓ — cross-validated
      ↓
-SQL Server: Replenishment Queries (sql/08)
+SQL Server: Replenishment Queries (sql/08_replenishment_analysis.sql)  ← current
      ↓
 Power BI Dashboard
      ↓
 Business Recommendations
 ```
 
-**The entire Python data-generation and analytical phase of this project is complete.** SQL Server implementation now has a fully loaded, fully validated database, with three consecutive analytical scripts (`04` data validation, `05` KPIs, `06` stockout analysis) independently reproducing the Python phase's findings to a very close match — strong, repeated evidence that the project's conclusions reflect a real property of the dataset, not an artifact of any one tool. Several real bugs were found and fixed throughout the SQL phase, all documented rather than silently patched, consistent with this project's approach throughout. The project now moves into overstock and replenishment queries, the final two analytical scripts before Power BI.
+**The entire Python data-generation and analytical phase of this project is complete.** SQL Server implementation now has a fully loaded, fully validated database, with four consecutive analytical scripts (`04` data validation, `05` KPIs, `06` stockout analysis, `07` overstock analysis) independently reproducing the Python phase's findings to a very close — in several cases exact — match, including specific product and store names ranking identically in both stacks. This is strong, repeated evidence that the project's conclusions reflect a real property of the dataset, not an artifact of any one tool. Several real bugs were found and fixed throughout the SQL phase, all documented rather than silently patched, consistent with this project's approach throughout. The project now moves into the final analytical script — replenishment — before Power BI.
 
 ---
 
