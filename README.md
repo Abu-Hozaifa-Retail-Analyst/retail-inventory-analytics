@@ -170,6 +170,7 @@ dim_product ─── fact_inventory ─── dim_store
 #### Derived / Analytical Output
 
 * `data/processed/replenishment_action_list.csv` — one row per product-store combination, the Python phase's final actionable deliverable (see `07_replenishment_analysis.ipynb`)
+* `dbo.replenishment_action_list` (SQL Server table) — the same 10,000-row deliverable, materialized as a permanent table by `sql/08_replenishment_analysis.sql`, ready to feed Power BI directly
 
 ---
 
@@ -652,7 +653,9 @@ Excess tier: High 152 | Medium 132 | Low 216 (matches 05's 153-product finding)
 
 ```text
 Orders that should not have been placed at all: 719,348 of 730,069 (98.5%)
-Total netting overshoot value: $25.30B — exactly 2.00x the MOQ-only figure
+Total netting overshoot value: $25.30B — about 2.00x the MOQ-only figure
+                               (1.9976x in the T-SQL recomputation; the Python notebook's
+                                two-decimal print rounded this to "2.00x")
 ```
 
 **Replenishment Action List:**
@@ -764,7 +767,34 @@ Capital recapture at 2x cap: $8.33B (Python: $8.36B)
 
 The strongest cross-validation run of the SQL phase — the top-15 product ranking matches the Python notebook's ranking in the same order, product for product.
 
-Four independent T-SQL scripts in a row (`04`, `05`, `06`, `07`) now reproduce the Python phase's findings essentially exactly, on the same 10.96M-row dataset — strong evidence the analysis reflects a real property of the data, not an artifact of one tool's implementation.
+### SQL-Side Replenishment Analysis (`sql/08_replenishment_analysis.sql`) — SQL-Phase Capstone
+
+Port of `07_replenishment_analysis.ipynb`: the netting-overshoot root-cause measurement, a combo-level excess tier, a product-level ABC classification built in SQL for the first time (annual COGS, same cumulative-threshold window-function technique as `07`'s Pareto query, applied to a different metric), and the final Replenishment Action List. The action list is materialized as a **permanent table, `dbo.replenishment_action_list`** — the SQL-side equivalent of `data/processed/replenishment_action_list.csv` — so it can be queried directly or fed into Power BI without re-running the script.
+
+```text
+Orders that should not have been placed: 719,348 of 730,069 (98.53%) — exact match
+Netting overshoot: $25.30B | MOQ-only overshoot: $12.67B | ratio: 1.9976x
+Class A: 51 products, ~79.4% of annual COGS — exact match
+
+Action list (identical to the Python deliverable, count for count):
+  MAINTAIN 5,779 | SUPPRESS 1,901 | REDUCE 1,738 | EXPEDITE 582
+
+Retrospective recapture by action:
+  SUPPRESS $11.80B | REDUCE $2.80B | MAINTAIN $5.25B | EXPEDITE $5.45B
+  SUPPRESS + REDUCE (risk-aware recoverable): $14.60B — exact match
+```
+
+**A cross-check worth noting:** the combo-level excess tier produces 2,906 "High" combos, but only 1,901 become SUPPRESS. The difference is combos that are High-excess *and* carry real low-stock risk — the action rules route those to MAINTAIN or EXPEDITE rather than suppressing them. This is the safety-first rule working as designed, not a discrepancy.
+
+**Two real issues found while building this script, documented rather than silently patched:**
+* **SQL Server does not allow a computed column to reference another computed column.** `netting_overshoot_value` initially referenced `netting_overshoot_units` (itself computed), which errored. Fixed by inlining the full expression instead of chaining it.
+* **Missing `GO` batch separators let a failure cascade invisibly.** Without them, everything after the failed `ALTER TABLE` kept executing in the same batch, silently failing on anything that depended on the missing column — and the script's final `PRINT` (which depends on nothing) still announced success. Fixed by separating every section into its own batch, so a failure can no longer be masked by a later, unrelated success message.
+
+**A correction to an earlier figure:** the netting-to-MOQ ratio is 1.9976x, not "exactly 2.00x" as first written. The Python notebook printed two decimals and rounded it; the T-SQL recomputation exposes the real value. The conclusion is unchanged — the netting flaw encloses the MOQ mechanism and adds a roughly equal amount of previously-invisible overshoot — but "about 2x" is the accurate claim.
+
+### SQL Phase Summary
+
+Five consecutive T-SQL scripts (`04` through `08`) now reproduce the Python phase's findings on the same 10.96M-row dataset — in most cases exactly, including specific product and store names ranking identically in both stacks. That is strong evidence the analysis reflects a real property of the data, not an artifact of one tool's implementation.
 
 ---
 
@@ -793,7 +823,7 @@ Four independent T-SQL scripts in a row (`04`, `05`, `06`, `07`) now reproduce t
 # 🔄 Hybrid Analytics Architecture
 
 **Python** — synthetic data generation, profiling, cleaning, complex transformations, statistical/demand/inventory modeling. *Complete.*
-**SQL Server** — structured storage, validation, KPIs, and stockout analysis complete; overstock/replenishment queries in progress.
+**SQL Server** — structured storage, validation, KPIs, stockout, overstock, and replenishment analysis all complete and cross-validated against the Python phase; the final action list lives in a permanent table ready for Power BI. *Complete.*
 **Power BI** — KPI dashboards, inventory health monitoring, store/product analysis, stockout visualization, management reporting. *Next phase.*
 
 ---
@@ -835,14 +865,15 @@ SQL Server validation (40/40 PASS): fix fact_sales missing is_ramadan/is_eid_per
 Add sql/05_inventory_kpis.sql — cross-validated against 03_inventory_kpis.ipynb; round days_of_inventory; add fact_inventory-wipe warning to 02_create_tables.sql
 Add sql/06_stockout_analysis.sql — near-miss breakdowns and stress tests, cross-validated against 04_stockout_analysis.ipynb
 Add sql/07_overstock_analysis.sql — excess value, worst offenders, Pareto, MOQ attribution, capital recapture, cross-validated against 05_overstock_analysis.ipynb (near-exact match on every figure)
+Add sql/08_replenishment_analysis.sql — netting root cause (98.53% of orders unnecessary), combo-level excess tier, SQL-built ABC classification, materialized dbo.replenishment_action_list (10,000 rows, action counts identical to the Python deliverable); closes the SQL Server analytical phase
 ```
 
 ### Current Development Milestone
 
 ```text
-sql/08_replenishment_analysis.sql — re-express 07_replenishment_analysis.ipynb's
-deepest root-cause measurement (inventory-position netting) and the final
-Replenishment Action List as T-SQL, closing out the SQL Server phase
+Power BI dashboard — connect to the SQL Server database and build the
+reporting layer on top of the validated tables and the materialized
+dbo.replenishment_action_list (SQL phase complete: scripts 01-08)
 ```
 
 ---
@@ -903,16 +934,16 @@ Replenishment Action List as T-SQL, closing out the SQL Server phase
 * [x] `sql/05_inventory_kpis.sql` — cross-validated against `03_inventory_kpis.ipynb` (turnover, GMROI, sell-through, dead stock, excess share all match)
 * [x] `sql/06_stockout_analysis.sql` — cross-validated against `04_stockout_analysis.ipynb` (low-stock exposure, lead-time risk, both stress tests all match)
 * [x] `sql/07_overstock_analysis.sql` — cross-validated against `05_overstock_analysis.ipynb` (excess share, worst offenders, Pareto concentration, MOQ attribution, capital recapture all match)
+* [x] `sql/08_replenishment_analysis.sql` — netting root cause (98.53% of orders unnecessary, $25.30B), SQL-built ABC classification, materialized `dbo.replenishment_action_list` (10,000 rows; MAINTAIN 5,779 / SUPPRESS 1,901 / REDUCE 1,738 / EXPEDITE 582 — identical to the Python deliverable; $14.60B risk-aware recoverable)
 
 ## In Progress
 
-* [ ] `sql/08_replenishment_analysis.sql`
+* [ ] Power BI dashboard
 
 ## Planned
 
 * [ ] Inventory aging
 * [ ] Store/product diagnosis (store-to-store transfer recommendations)
-* [ ] Power BI dashboard
 * [ ] Business recommendations (`docs/business_recommendations.md`)
 * [ ] Final portfolio documentation
 
@@ -965,14 +996,14 @@ SQL Server: Stockout Analysis (sql/06_stockout_analysis.sql) ✓ — cross-valid
      ↓
 SQL Server: Overstock Analysis (sql/07_overstock_analysis.sql) ✓ — cross-validated
      ↓
-SQL Server: Replenishment Queries (sql/08_replenishment_analysis.sql)  ← current
+SQL Server: Replenishment Analysis (sql/08_replenishment_analysis.sql) ✓ — cross-validated
      ↓
-Power BI Dashboard
+Power BI Dashboard  ← current
      ↓
 Business Recommendations
 ```
 
-**The entire Python data-generation and analytical phase of this project is complete.** SQL Server implementation now has a fully loaded, fully validated database, with four consecutive analytical scripts (`04` data validation, `05` KPIs, `06` stockout analysis, `07` overstock analysis) independently reproducing the Python phase's findings to a very close — in several cases exact — match, including specific product and store names ranking identically in both stacks. This is strong, repeated evidence that the project's conclusions reflect a real property of the dataset, not an artifact of any one tool. Several real bugs were found and fixed throughout the SQL phase, all documented rather than silently patched, consistent with this project's approach throughout. The project now moves into the final analytical script — replenishment — before Power BI.
+**The entire Python phase and the entire SQL Server phase of this project are now complete.** SQL Server has a fully loaded, fully validated database, and five consecutive scripts (`04` data validation, `05` KPIs, `06` stockout analysis, `07` overstock analysis, `08` replenishment analysis) independently reproduce the Python phase's findings — in most cases exactly, including specific product and store names ranking identically in both stacks and a replenishment action list whose counts match the Python deliverable row for row. The one place the two stacks differ is informative rather than concerning: the netting-to-MOQ ratio is 1.9976x, not the "2.00x" the Python notebook's two-decimal print suggested, a figure corrected in the README rather than left standing. Several real bugs were found and fixed throughout the SQL phase, all documented rather than silently patched. The final action list now lives in a permanent table, `dbo.replenishment_action_list`, ready to feed the Power BI dashboard directly.
 
 ---
 
