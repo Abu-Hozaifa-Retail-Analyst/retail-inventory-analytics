@@ -218,7 +218,8 @@ retail-inventory-analytics/
 │   ├── 05_inventory_kpis.sql
 │   ├── 06_stockout_analysis.sql
 │   ├── 07_overstock_analysis.sql
-│   └── 08_replenishment_analysis.sql
+│   ├── 08_replenishment_analysis.sql
+│   └── 09_powerbi_views.sql
 │
 ├── powerbi/
 │   └── retail_inventory_analytics.pbix
@@ -798,6 +799,48 @@ Five consecutive T-SQL scripts (`04` through `08`) now reproduce the Python phas
 
 ---
 
+# 📈 Power BI Reporting Layer — In Progress
+
+The SQL phase ends with a reporting layer (`sql/09_powerbi_views.sql`): eight views that Power BI imports instead of the base tables. Nothing in this script modifies a table — it only creates views, so unlike `02_create_tables.sql` it cannot wipe `fact_inventory`.
+
+### Design Decisions
+
+* **`fact_inventory` (10.96M rows) is pre-aggregated to month × store × product (360,000 rows)** — small enough to import quickly, rich enough to slice by any product or store attribute. Importing the full daily table or using DirectQuery would add size or latency without showing anything the monthly grain doesn't.
+* **Monthly views store sums of daily values, never pre-computed averages.** Averaging pre-averaged numbers gives wrong totals once a report re-aggregates them. With sums (e.g. `inventory_value_days`), a DAX measure divides by days-in-period and stays correct at any grain — overall, per product, per store, per month.
+* **`dim_date` is deliberately not exposed.** Its `is_ramadan`/`is_eid_period` flags are permanently `False` (a known generator quirk, documented above), and month grain is all the dashboard needs, so `vw_dim_month` replaces it.
+* **Supplier attributes are denormalized onto `vw_dim_product`** so the Power BI model stays a clean star schema instead of snowflaking through `dim_supplier`.
+* **The action list carries each combo's order-overshoot totals directly.** A combo is identified by two columns (store and product), and Power BI relationships need a single key, so the action list cannot slice the monthly fact views. Rolling the overshoot figures into the action-list view itself makes it self-contained: "recoverable value by SUPPRESS / REDUCE" works natively. The trade-off is that those dollar figures are whole-period, not month-sliceable.
+* **Sell-through % is left out of the dashboard's first version.** It needs each combo's beginning inventory, which the monthly views do not carry. It can be added later from each combo's first-day `opening_stock`.
+
+### Views
+
+```text
+vw_dim_month · vw_dim_product · vw_dim_store            (dimensions)
+vw_inventory_monthly · vw_sales_monthly                  (month x store x product facts)
+vw_replenishment_overshoot_monthly                       (root-cause view: netting + MOQ overshoot)
+vw_product_abc                                           (ABC class x excess tier, product grain)
+vw_replenishment_action_list                             (10,000 combos + recommended action + overshoot totals)
+```
+
+### Reconciliation — 15 / 15 PASS
+
+Every view is tied back to a figure already established in the Python phase or scripts `04`–`08`, inside the script itself, so a wrong aggregation surfaces before it becomes a wrong chart:
+
+```text
+360,000 monthly rows (10,000 x 36) | avg daily inventory value $12.646B | avg daily excess value $12.524B
+33,789 low-stock events | 0 stockouts | 125,000 sales transactions
+730,069 orders | 719,348 unnecessary | $25.305B netting overshoot | $12.668B MOQ overshoot
+ABC: 51 A / 105 B / 344 C | 152 High-excess products | 10,000 action-list rows
+```
+
+Because the expected dollar figures came from earlier SQL scripts, this proves the views aggregate consistently with `05`–`08`; the agreement between those scripts and the Python phase was established separately above.
+
+### Access
+
+Power BI connects through a dedicated read-only SQL login (`powerbi_reader`) granted `SELECT` on the eight views only — not `sa`. SQL Server's ownership chaining lets it read through the views without any direct access to the base tables. The login's password is set locally and never committed.
+
+---
+
 # 🛠️ Technology Stack
 
 | Technology  | Purpose                              |
@@ -866,14 +909,15 @@ Add sql/05_inventory_kpis.sql — cross-validated against 03_inventory_kpis.ipyn
 Add sql/06_stockout_analysis.sql — near-miss breakdowns and stress tests, cross-validated against 04_stockout_analysis.ipynb
 Add sql/07_overstock_analysis.sql — excess value, worst offenders, Pareto, MOQ attribution, capital recapture, cross-validated against 05_overstock_analysis.ipynb (near-exact match on every figure)
 Add sql/08_replenishment_analysis.sql — netting root cause (98.53% of orders unnecessary), combo-level excess tier, SQL-built ABC classification, materialized dbo.replenishment_action_list (10,000 rows, action counts identical to the Python deliverable); closes the SQL Server analytical phase
+Add sql/09_powerbi_views.sql — month x store x product reporting views, product ABC view, action-list view with overshoot totals; 15/15 reconciliation checks pass
 ```
 
 ### Current Development Milestone
 
 ```text
-Power BI dashboard — connect to the SQL Server database and build the
-reporting layer on top of the validated tables and the materialized
-dbo.replenishment_action_list (SQL phase complete: scripts 01-08)
+Power BI model and dashboard — import the eight sql/09 views through the
+read-only powerbi_reader login, build the star-schema relationships and DAX
+measures, then the report pages (data layer complete: scripts 01-09)
 ```
 
 ---
@@ -935,10 +979,11 @@ dbo.replenishment_action_list (SQL phase complete: scripts 01-08)
 * [x] `sql/06_stockout_analysis.sql` — cross-validated against `04_stockout_analysis.ipynb` (low-stock exposure, lead-time risk, both stress tests all match)
 * [x] `sql/07_overstock_analysis.sql` — cross-validated against `05_overstock_analysis.ipynb` (excess share, worst offenders, Pareto concentration, MOQ attribution, capital recapture all match)
 * [x] `sql/08_replenishment_analysis.sql` — netting root cause (98.53% of orders unnecessary, $25.30B), SQL-built ABC classification, materialized `dbo.replenishment_action_list` (10,000 rows; MAINTAIN 5,779 / SUPPRESS 1,901 / REDUCE 1,738 / EXPEDITE 582 — identical to the Python deliverable; $14.60B risk-aware recoverable)
+* [x] `sql/09_powerbi_views.sql` — eight reporting views (monthly facts, dimensions, product ABC, action list); 15/15 reconciliation checks pass against the established figures
 
 ## In Progress
 
-* [ ] Power BI dashboard
+* [ ] Power BI model, DAX measures, and report pages (data layer already complete)
 
 ## Planned
 
@@ -997,6 +1042,8 @@ SQL Server: Stockout Analysis (sql/06_stockout_analysis.sql) ✓ — cross-valid
 SQL Server: Overstock Analysis (sql/07_overstock_analysis.sql) ✓ — cross-validated
      ↓
 SQL Server: Replenishment Analysis (sql/08_replenishment_analysis.sql) ✓ — cross-validated
+     ↓
+Power BI Data Layer (sql/09_powerbi_views.sql) ✓ — 15/15 reconciled
      ↓
 Power BI Dashboard  ← current
      ↓
