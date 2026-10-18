@@ -124,39 +124,38 @@ GO
 -- netting policy would have ordered (same logic as 08_replenishment_
 -- analysis.sql). Limitation carried over: opening_stock is the
 -- inventory-position proxy; in-transit orders are not tracked.
-IF OBJECT_ID('dbo.vw_replenishment_overshoot_monthly', 'V') IS NOT NULL
-    DROP VIEW dbo.vw_replenishment_overshoot_monthly;
+IF OBJECT_ID('dbo.vw_replenishment_action_list', 'V') IS NOT NULL
+    DROP VIEW dbo.vw_replenishment_action_list;
 GO
-CREATE VIEW dbo.vw_replenishment_overshoot_monthly AS
+-- Carries each combo's whole-period order-overshoot totals so the action
+-- list is self-contained: "recoverable value by SUPPRESS / REDUCE" works
+-- without a two-column relationship to the monthly fact views.
+CREATE VIEW dbo.vw_replenishment_action_list AS
+WITH Overshoot AS (
+    SELECT
+        store_id, product_id,
+        SUM(orders_placed)            AS orders_placed,
+        SUM(unnecessary_orders)       AS unnecessary_orders,
+        SUM(moq_inflated_orders)      AS moq_inflated_orders,
+        SUM(ordered_value)            AS ordered_value,
+        SUM(netting_overshoot_value)  AS netting_overshoot_value,
+        SUM(moq_overshoot_value)      AS moq_overshoot_value
+    FROM dbo.vw_replenishment_overshoot_monthly
+    GROUP BY store_id, product_id
+)
 SELECT
-    DATEFROMPARTS(YEAR(fi.[date]), MONTH(fi.[date]), 1) AS month_start,
-    fi.store_id,
-    fi.product_id,
-    COUNT(*)                                              AS orders_placed,
-    SUM(CASE WHEN io.ideal_order = 0 THEN 1 ELSE 0 END)   AS unnecessary_orders,
-    SUM(CASE WHEN fi.planned_order_quantity > fi.target_stock_level
-             THEN 1 ELSE 0 END)                           AS moq_inflated_orders,
-    SUM(fi.planned_order_quantity * p.unit_cost)          AS ordered_value,
-    SUM(CASE WHEN fi.planned_order_quantity > io.ideal_order
-             THEN (fi.planned_order_quantity - io.ideal_order) * p.unit_cost
-             ELSE 0 END)                                  AS netting_overshoot_value,
-    SUM(CASE WHEN fi.planned_order_quantity > fi.target_stock_level
-             THEN (fi.planned_order_quantity - fi.target_stock_level) * p.unit_cost
-             ELSE 0 END)                                  AS moq_overshoot_value
-FROM dbo.fact_inventory fi
-JOIN dbo.dim_product p ON fi.product_id = p.product_id
-CROSS APPLY (
-    SELECT CASE
-        WHEN fi.opening_stock >= fi.target_stock_level THEN 0
-        WHEN (fi.target_stock_level - fi.opening_stock) > fi.minimum_order_qty
-            THEN fi.target_stock_level - fi.opening_stock
-        ELSE fi.minimum_order_qty
-    END AS ideal_order
-) io
-WHERE fi.planned_order_quantity > 0
-GROUP BY DATEFROMPARTS(YEAR(fi.[date]), MONTH(fi.[date]), 1), fi.store_id, fi.product_id;
+    a.store_id, a.product_id, a.annual_cogs_class, a.excess_tier,
+    a.avg_excess_value, a.low_stock_pct, a.min_coverage_days,
+    a.recommended_action,
+    ISNULL(o.orders_placed, 0)            AS orders_placed,
+    ISNULL(o.unnecessary_orders, 0)       AS unnecessary_orders,
+    ISNULL(o.moq_inflated_orders, 0)      AS moq_inflated_orders,
+    ISNULL(o.ordered_value, 0)            AS ordered_value,
+    ISNULL(o.netting_overshoot_value, 0)  AS netting_overshoot_value,
+    ISNULL(o.moq_overshoot_value, 0)      AS moq_overshoot_value
+FROM dbo.replenishment_action_list a
+LEFT JOIN Overshoot o ON a.store_id = o.store_id AND a.product_id = o.product_id;
 GO
-
 -- ============================================================
 -- PRODUCT-GRAIN VIEW: ABC x excess-tier (feeds the priority matrix)
 -- Same cumulative-threshold technique as 07/08. Zero-value rows are
@@ -333,5 +332,7 @@ IF EXISTS (SELECT 1 FROM @Checks WHERE status = 'FAIL')
 ELSE
     PRINT 'POWER BI VIEWS: ALL RECONCILIATION CHECKS PASSED';
 GO
+
+
 
 
